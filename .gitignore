@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+QQBotData/
+build/
+dist/
+*.spec
+logs/
+tunnel_build/
+cloudflared.exe
+*.log

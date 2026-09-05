@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QQ 机器人核心 - 管理面板</title>
+<style>
+  :root {
+    --bg: #0f1419; --card: #1a2027; --card2: #212a33; --border: #2c3742;
+    --text: #e6edf3; --muted: #8b98a5; --green: #2ea86b; --red: #e5534b;
+    --blue: #4c8dff; --yellow: #d29922;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text);
+    font-family: "Microsoft YaHei", "Segoe UI", sans-serif; min-height: 100vh; }
+
+  /* ---- 顶栏 ---- */
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 24px;
+    background: var(--card); border-bottom: 1px solid var(--border); }
+  header .logo { width: 32px; height: 32px; border-radius: 8px; background: var(--green);
+    display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 18px; }
+  header h1 { font-size: 16px; font-weight: 600; }
+  header .ver { color: var(--muted); font-size: 12px; }
+  header .spacer { flex: 1; }
+  header .dotline { font-size: 12px; color: var(--muted); }
+  nav { display: flex; gap: 4px; padding: 0 20px; background: var(--card);
+    border-bottom: 1px solid var(--border); }
+  nav button { background: none; border: none; color: var(--muted); font-size: 14px;
+    padding: 12px 18px; cursor: pointer; border-bottom: 2px solid transparent; }
+  nav button.active { color: var(--text); border-bottom-color: var(--blue); }
+  main { max-width: 1080px; margin: 0 auto; padding: 20px 24px 60px; }
+  .page { display: none; }
+  .page.active { display: block; }
+
+  /* ---- 通用 ---- */
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 18px; margin-bottom: 14px; }
+  .card h3 { font-size: 13px; color: var(--muted); font-weight: 500; margin-bottom: 10px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+  .value { font-size: 19px; font-weight: 600; }
+  .sub { font-size: 12px; color: var(--muted); margin-top: 6px; word-break: break-all; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    margin-right: 6px; background: var(--muted); vertical-align: 1px; }
+  .dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot.off { background: var(--red); }
+  button.btn { background: var(--card2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 9px 16px; font-size: 13px; cursor: pointer; }
+  button.btn:hover { border-color: var(--blue); }
+  button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+  button.danger { background: var(--red); border-color: var(--red); color: #fff; }
+  input, textarea { background: var(--card2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 8px; padding: 9px 12px; font-size: 13px; outline: none; }
+  input:focus, textarea:focus { border-color: var(--blue); }
+  label.f { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 6px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+  /* ---- 认证遮罩 ---- */
+  #authMask { position: fixed; inset: 0; background: rgba(8,11,15,.96);
+    display: flex; align-items: center; justify-content: center; z-index: 10; }
+  #authMask .box { background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 32px 36px; width: 340px; }
+  #authMask h2 { font-size: 16px; margin-bottom: 6px; }
+  #authMask p { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  #authMask input { width: 100%; margin-bottom: 12px; }
+  #authMask button { width: 100%; }
+  #authErr { color: var(--red); font-size: 12px; margin-bottom: 10px; min-height: 16px; }
+
+  /* ---- 模块页 ---- */
+  .modulesLayout { display: flex; gap: 16px; align-items: flex-start; }
+  .moduleNav { width: 230px; flex-shrink: 0; background: var(--card);
+    border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .moduleNav .hd { padding: 10px 14px; font-size: 12px; color: var(--muted);
+    border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
+  .moduleNav .item { display: block; width: 100%; text-align: left; background: none;
+    border: none; border-bottom: 1px solid var(--border); color: var(--text);
+    padding: 11px 14px; font-size: 13px; cursor: pointer; }
+  .moduleNav .item:last-child { border-bottom: none; }
+  .moduleNav .item.active { background: var(--card2); border-left: 3px solid var(--blue); }
+  .moduleNav .item .desc { display: block; font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .moduleContent { flex: 1; min-width: 0; }
+  #moduleFrame { width: 100%; min-height: 420px; border: 1px solid var(--border);
+    border-radius: 12px; background: var(--card); }
+  #moduleEmpty { color: var(--muted); font-size: 13px; padding: 40px; text-align: center; }
+
+  /* ---- 日志 ---- */
+  #log { background: #0b0f14; border: 1px solid var(--border); border-radius: 12px;
+    height: 300px; overflow-y: auto; padding: 12px 14px; font-family: Consolas, monospace;
+    font-size: 12.5px; line-height: 1.7; }
+  #log .t { color: var(--muted); margin-right: 8px; }
+  #log .tag { margin-right: 8px; padding: 1px 6px; border-radius: 4px; font-size: 11px; }
+  .tag-msg { background: #12335c; color: #79b8ff; }
+  .tag-meta { background: #2b2436; color: #c3a6ff; }
+  .tag-notice { background: #33270f; color: #e3b341; }
+</style>
+</head>
+<body>
+
+<div id="authMask" style="display:none">
+  <div class="box">
+    <h2 id="authTitle">设置面板密码</h2>
+    <p id="authDesc">首次使用：请设置管理面板密码（保存在本机 QQBotData，之后每次打开面板都需要输入）</p>
+    <div id="authErr"></div>
+    <input type="password" id="pwd1" placeholder="输入密码（至少 4 位）" onkeydown="authEnter(event)">
+    <input type="password" id="pwd2" placeholder="再次输入确认" onkeydown="authEnter(event)">
+    <button class="primary" id="authBtn" onclick="authSubmit()">设置并进入</button>
+  </div>
+</div>
+
+<header>
+  <div class="logo">Q</div>
+  <h1>QQ 机器人核心</h1>
+  <span class="ver" id="ver"></span>
+  <span class="spacer"></span>
+  <span class="dotline" id="connState">连接中...</span>
+  <button class="btn" style="padding:5px 12px;font-size:12px" onclick="logout()">退出登录</button>
+</header>
+
+<nav>
+  <button data-page="modules" class="active" onclick="showPage('modules')">模块</button>
+  <button data-page="ai" onclick="showPage('ai')">AI 配置</button>
+  <button data-page="overview" onclick="showPage('overview')">概览</button>
+</nav>
+
+<main>
+  <!-- ============ 模块页 ============ -->
+  <section id="page-modules" class="page active">
+    <div class="modulesLayout">
+      <div class="moduleNav">
+        <div class="hd"><span>已安装模块</span><a href="javascript:void(0)" onclick="loadModules()"
+          style="color:var(--blue);font-size:12px;text-decoration:none">刷新</a></div>
+        <div id="moduleList"></div>
+      </div>
+      <div class="moduleContent" id="moduleContent">
+        <div id="moduleEmpty">左侧选择一个模块查看其配置界面。<br>
+          把模块 .py（可带同名 .html 界面）放进 modules 文件夹，几秒内会自动出现在这里。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ AI 配置页 ============ -->
+  <section id="page-ai" class="page">
+    <div class="card">
+      <h3>OpenAI 兼容接口配置（模块可通过核心调用）</h3>
+      <label class="f">API 地址（如 https://api.openai.com 或自建中转地址）</label>
+      <input id="aiBase" style="width:100%;max-width:520px" placeholder="https://api.example.com">
+      <label class="f">API 密钥</label>
+      <input id="aiKey" type="password" style="width:100%;max-width:520px" placeholder="sk-...">
+      <label class="f">模型 ID</label>
+      <input id="aiModel" style="width:100%;max-width:520px" placeholder="gpt-4o / glm-4 / deepseek-chat ...">
+      <div class="row" style="margin-top:16px">
+        <button class="primary" onclick="saveAI()">保存配置</button>
+        <button class="btn" onclick="testAI()">测试对话</button>
+        <span class="sub" id="aiState"></span>
+      </div>
+      <div class="sub" id="aiTestResult" style="white-space:pre-wrap;margin-top:10px"></div>
+    </div>
+  </section>
+
+  <!-- ============ 概览页 ============ -->
+  <section id="page-overview" class="page">
+    <div class="grid">
+      <div class="card">
+        <h3>QQ 进程</h3>
+        <div class="value" id="qqState"><span class="dot off"></span>未检测到</div>
+        <div class="sub" id="qqDetail">等待扫描...</div>
+      </div>
+      <div class="card">
+        <h3>OneBot 连接（QQ 侧）</h3>
+        <div class="value" id="botState"><span class="dot off"></span>0 个</div>
+        <div class="sub">QQ 侧实现（如 NapCat）连入 ws://&lt;ip&gt;:<span id="obPort2">2280</span>/onebot/v11/ws</div>
+      </div>
+      <div class="card">
+        <h3>运行状态</h3>
+        <div class="value" id="uptime">-</div>
+        <div class="sub" id="mcpState"></div>
+      </div>
+      <div class="card">
+        <h3>服务地址</h3>
+        <div class="value">0.0.0.0:<span id="svrPort">2280</span></div>
+        <div class="sub">面板 / OneBot API / 模块接口共用此端口</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h3>实时事件流</h3>
+      <div id="log"></div>
+    </div>
+
+    <div class="card">
+      <h3>测试 OneBot 动作</h3>
+      <div class="row">
+        <input id="actName" placeholder="动作名，如 get_login_info" style="min-width:210px">
+        <input id="actParams" placeholder='参数 JSON，如 {"user_id":123}' style="flex:1;min-width:240px">
+        <button class="primary" onclick="sendAction()">发送</button>
+      </div>
+      <div class="sub" id="actResult" style="white-space:pre-wrap;margin-top:10px"></div>
+    </div>
+
+    <div class="card">
+      <h3>框架控制</h3>
+      <div class="row">
+        <button class="primary" onclick="reloadModules()">重载模块</button>
+        <button class="danger" onclick="shutdownFramework()">关闭框架</button>
+        <span class="sub">关闭后 QQ 本体不受影响，重新双击 QQBot.exe 即可再次启动</span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+let token = "";            // 仅存于页面内存，刷新/关闭即失效，每次进入都需输密码
+let sessionWs = null;
+let currentModule = null;
+let modulePollTimer = null;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const H = () => ({"Content-Type": "application/json", "X-Access-Token": token});
+const fmtUptime = s => { if(s==null) return "-"; const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
+  return (d?d+"天 ":"")+(h?h+"时 ":"")+(m?m+"分":"刚启动"); };
+const fmtTime = ts => new Date((ts||Date.now()/1000)*1000).toLocaleTimeString("zh-CN",{hour12:false});
+
+/* ---------- 认证 ---------- */
+async function boot(){
+  let st;
+  try { st = await (await fetch("/api/auth_state")).json(); }
+  catch(e){ $("authErr").textContent = "无法连接核心服务"; $("authMask").style.display="flex"; return; }
+  if (st.need_setup){
+    $("authTitle").textContent = "设置面板密码";
+    $("authDesc").textContent = "首次使用：请设置管理面板密码（保存在本机 QQBotData，之后每次打开面板都需要输入）";
+    $("authBtn").textContent = "设置并进入";
+  } else {
+    $("authTitle").textContent = "面板登录";
+    $("authDesc").textContent = "请输入面板密码（不保存浏览器凭据，每次进入都需输入）";
+    $("pwd2").style.display = "none";
+    $("authBtn").textContent = "登 录";
+  }
+  $("authMask").style.display = "flex";
+}
+function authEnter(e){ if(e.key === "Enter") authSubmit(); }
+async function authSubmit(){
+  const p1 = $("pwd1").value, p2 = $("pwd2").value;
+  const isSetup = $("authBtn").textContent.includes("设置");
+  if (isSetup && p1 !== p2){ $("authErr").textContent = "两次输入不一致"; return; }
+  try {
+    const path = isSetup ? "/api/setup" : "/api/login";
+    const r = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({password: p1})});
+    const d = await r.json();
+    if (!d.ok){ $("authErr").textContent = d.error || "失败"; return; }
+    token = d.token || "ok";
+    $("authMask").style.display = "none";
+    $("pwd1").value = ""; $("pwd2").value = ""; $("authErr").textContent = "";
+    enterPanel();
+  } catch(e){ $("authErr").textContent = "请求失败: " + e.message; }
+}
+function logout(){ location.reload(); }
+
+/* ---------- 页面切换 ---------- */
+function showPage(name){
+  document.querySelectorAll("nav button").forEach(b =>
+    b.classList.toggle("active", b.dataset.page === name));
+  document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+  $("page-" + name).classList.add("active");
+  if (name === "modules"){ loadModules(); startModulePoll(); } else stopModulePoll();
+  if (name === "ai") loadAI();
+}
+function startModulePoll(){ stopModulePoll(); modulePollTimer = setInterval(loadModules, 5000); }
+function stopModulePoll(){ if (modulePollTimer){ clearInterval(modulePollTimer); modulePollTimer = null; } }
+
+/* ---------- 模块 ---------- */
+async function loadModules(){
+  let list;
+  try {
+    const r = await fetch("/api/modules", {headers: H()});
+    if (r.status === 401) return;
+    list = await r.json();
+  } catch(e){ return; }
+  const box = $("moduleList");
+  box.innerHTML = "";
+  if (!list.length){
+    box.innerHTML = '<div style="padding:14px;font-size:12px;color:var(--muted)">尚未安装模块，把 .py 放进 modules 文件夹</div>';
+  }
+  list.forEach((m, i) => {
+    const b = document.createElement("button");
+    b.className = "item" + ((currentModule === m.file || (!currentModule && i === 0)) ? " active" : "");
+    b.innerHTML = `${esc(m.name)}${m.version ? ' <span style="color:var(--muted);font-size:11px">v'+esc(m.version)+'</span>' : ''}` +
+      (m.description ? `<span class="desc">${esc(m.description)}</span>` : "");
+    b.onclick = () => selectModule(m.file);
+    box.appendChild(b);
+  });
+  const target = currentModule && list.find(m => m.file === currentModule) ? currentModule
+               : (list[0] && list[0].file);
+  if (target) selectModule(target);
+}
+
+function selectModule(file){
+  currentModule = file;
+  document.querySelectorAll(".moduleNav .item").forEach((b, i) => {});
+  loadModulesRender();
+  const c = $("moduleContent");
+  c.innerHTML = '<iframe id="moduleFrame"></iframe>';
+  $("moduleFrame").src = `/api/modules/${encodeURIComponent(file)}/ui?token=${encodeURIComponent(token)}`;
+}
+async function loadModulesRender(){ /* 保留：刷新左侧高亮 */
+  const r = await fetch("/api/modules", {headers: H()});
+  if (r.status === 401) return;
+  const list = await r.json();
+  document.querySelectorAll(".moduleNav .item").forEach((b) => {
+    b.classList.toggle("active", b.textContent.includes(list.find(m=>m.file===currentModule)?.name || "___"));
+  });
+}
+
+/* ---------- AI ---------- */
+async function loadAI(){
+  try {
+    const r = await fetch("/api/ai/config", {headers: H()});
+    if (r.status === 401) return;
+    const d = await r.json();
+    $("aiBase").value = d.api_base || "";
+    $("aiKey").value = d.api_key || "";
+    $("aiModel").value = d.model || "";
+    $("aiState").textContent = d.ready ? "✓ 已配置" : "未配置完整";
+  } catch(e){}
+}
+async function saveAI(){
+  const r = await fetch("/api/ai/config", {method:"POST", headers: H(),
+    body: JSON.stringify({api_base: $("aiBase").value, api_key: $("aiKey").value, model: $("aiModel").value})});
+  const d = await r.json();
+  $("aiState").textContent = d.ok ? (d.ready ? "✓ 已保存，配置完整" : "已保存（信息不完整）") : "保存失败";
+}
+async function testAI(){
+  $("aiTestResult").textContent = "请求中...";
+  try {
+    const r = await fetch("/api/ai/test", {method:"POST", headers: H()});
+    const d = await r.json();
+    $("aiTestResult").textContent = d.ok ? "AI 回复: " + d.reply : "失败: " + d.error;
+  } catch(e){ $("aiTestResult").textContent = "请求失败: " + e.message; }
+}
+
+/* ---------- 概览 ---------- */
+function renderEvent(ev){
+  const el = $("log");
+  const div = document.createElement("div");
+  const pt = ev.post_type || "unknown";
+  let tag = "tag-meta", label = pt, detail = "";
+  if (pt === "message"){
+    tag = "tag-msg"; label = ev.message_type === "group" ? "群消息" : "私聊";
+    detail = `[${esc(ev.sender?.nickname || ev.user_id)}] ${esc(ev.raw_message ?? "")}`;
+  } else if (pt === "notice"){ tag = "tag-notice"; label = "通知:" + (ev.notice_type||"");
+    detail = JSON.stringify(ev, (k,v)=>k.startsWith("_")?undefined:v); }
+  else if (pt === "meta_event"){ label = "心跳"; detail = ""; }
+  else detail = JSON.stringify(ev, (k,v)=>k.startsWith("_")?undefined:v);
+  div.innerHTML = `<span class="t">${fmtTime(ev._received_at || Date.now()/1000)}</span>` +
+    `<span class="tag ${tag}">${esc(label)}</span>${esc(detail).slice(0, 300)}`;
+  el.appendChild(div);
+  while (el.childNodes.length > 200) el.removeChild(el.firstChild);
+  el.scrollTop = el.scrollHeight;
+}
+
+function renderStatus(st){
+  $("ver").textContent = "v" + st.version;
+  $("qqState").innerHTML = st.qq ? `<span class="dot on"></span>运行中 (PID ${st.qq.pid})`
+                                 : `<span class="dot off"></span>未检测到`;
+  $("qqDetail").textContent = st.qq ? `${st.qq.exe || "路径未知"} · ${st.qq.memory_mb}MB · 已运行 ${fmtUptime(st.qq.uptime_s)}` : "等待扫描...";
+  $("botState").innerHTML = st.bot_count > 0 ? `<span class="dot on"></span>${st.bot_count} 个`
+                                             : `<span class="dot off"></span>0 个`;
+  $("uptime").textContent = fmtUptime(st.uptime_s);
+  $("mcpState").textContent = st.mcp_enabled
+    ? `MCP 远控: 运行中 (端口 2281) · token: ${st.mcp_token}`
+    : "MCP 远控: 未启用";
+  $("svrPort").textContent = st.server_port;
+  $("obPort2").textContent = st.server_port;
+}
+
+async function refresh(){
+  try {
+    const r = await fetch("/api/status", {headers: H()});
+    if (r.status === 401){ location.reload(); return; }
+    renderStatus(await r.json());
+  } catch(e){ $("connState").textContent = "服务无响应"; }
+}
+
+function connectWS(){
+  if (sessionWs){ try{ sessionWs.close(); }catch(e){} }
+  $("connState").textContent = "实时通道连接中...";
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  sessionWs = new WebSocket(`${proto}://${location.host}/api/ws?token=${encodeURIComponent(token)}`);
+  sessionWs.onopen = () => $("connState").textContent = "已连接";
+  sessionWs.onclose = () => $("connState").textContent = "实时通道断开";
+  sessionWs.onmessage = e => {
+    const pkt = JSON.parse(e.data);
+    if (pkt.type === "status") renderStatus(pkt.data);
+    else if (pkt.type === "events") pkt.data.forEach(renderEvent);
+    else if (pkt.type === "event") renderEvent(pkt.data);
+  };
+}
+
+async function sendAction(){
+  const action = $("actName").value.trim();
+  if (!action) return;
+  let params = {};
+  try{ params = $("actParams").value.trim() ? JSON.parse($("actParams").value) : {}; }
+  catch(e){ $("actResult").textContent = "参数不是合法 JSON: " + e.message; return; }
+  $("actResult").textContent = "发送中...";
+  try {
+    const r = await fetch("/api/action", {method:"POST", headers: H(),
+      body: JSON.stringify({action, params})});
+    const d = await r.json();
+    $("actResult").textContent = d.ok ? "响应: " + JSON.stringify(d.result, null, 2) : "失败: " + d.error;
+  } catch(e){ $("actResult").textContent = "请求失败: " + e.message; }
+}
+
+async function reloadModules(){
+  const r = await fetch("/api/reload_modules", {method:"POST", headers: H()});
+  const d = await r.json();
+  alert(d.ok ? "模块已重载: " + (d.modules.join(", ") || "无") : "重载失败");
+  loadModules();
+}
+
+async function shutdownFramework(){
+  if (!confirm("确定要关闭框架吗？QQ 本体不受影响。")) return;
+  await fetch("/api/shutdown", {method:"POST", headers: H()});
+  document.body.innerHTML = '<main style="padding-top:80px;text-align:center;color:var(--muted)"><h2>框架已关闭，可关闭此页面</h2></main>';
+  if (sessionWs) sessionWs.close();
+}
+
+function enterPanel(){
+  refresh();
+  connectWS();
+  loadModules();
+  startModulePoll();
+}
+boot();
+</script>
+</body>
+</html>

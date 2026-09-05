@@ -1,0 +1,1 @@
+把你的 hook DLL 放到这个目录（config.json -> inject.dll_path 指向它），框架检测到 QQ 进程后会自动注入。
