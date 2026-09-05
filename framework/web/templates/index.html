@@ -172,7 +172,7 @@
       <div class="card">
         <h3>运行状态</h3>
         <div class="value" id="uptime">-</div>
-        <div class="sub" id="mcpState"></div>
+        <div class="sub" id="moduleCount"></div>
       </div>
       <div class="card">
         <h3>服务地址</h3>
@@ -366,9 +366,7 @@ function renderStatus(st){
   $("botState").innerHTML = st.bot_count > 0 ? `<span class="dot on"></span>${st.bot_count} 个`
                                              : `<span class="dot off"></span>0 个`;
   $("uptime").textContent = fmtUptime(st.uptime_s);
-  $("mcpState").textContent = st.mcp_enabled
-    ? `MCP 远控: 运行中 (端口 2281) · token: ${st.mcp_token}`
-    : "MCP 远控: 未启用";
+  $("moduleCount").textContent = `已加载模块 ${st.modules.length} 个`;
   $("svrPort").textContent = st.server_port;
   $("obPort2").textContent = st.server_port;
 }

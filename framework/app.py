@@ -10,7 +10,6 @@ from collections import deque
 import framework
 from framework.ai import AIService
 from framework.bot import BotAPI
-from framework.mcp_server import MCPServer
 from framework.onebot import OneBotServer
 from framework.paths import DATA_STORE_DIR, MODULES_DIR, app_root
 from framework.plugins import ModuleManager
@@ -32,7 +31,6 @@ class App:
         self.ai = AIService(self)
         self.onebot = OneBotServer(self)
         self.web = WebServer(self)
-        self.mcp = MCPServer(self)
         self.plugins = ModuleManager(self)
         self.monitor = QQProcessMonitor(self)
         self._shutdown: asyncio.Event | None = None
@@ -47,7 +45,6 @@ class App:
 
         await self.web.start()              # 面板 + OneBot API 同端口
         self.plugins.load_all()
-        self.mcp.start()
 
         self._bg_tasks.append(asyncio.create_task(self.monitor.loop()))
         self._bg_tasks.append(asyncio.create_task(self._modules_watcher()))

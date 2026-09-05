@@ -28,13 +28,6 @@ DEFAULT_CONFIG = {
         "api_key": "",
         "model": "",
     },
-    # MCP 远程控制服务（供隧道穿透后远程管理本机）
-    "mcp": {
-        "enabled": True,
-        "port": 2281,
-        # 必须设置：隧道是公网可达的，没有 token 等于裸奔
-        "token": "",
-    },
     "qq": {
         "process_names": ["QQ.exe"],
         "poll_interval": 5,

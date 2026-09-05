@@ -1,7 +1,7 @@
 # QQ 机器人核心（便携 EXE）
 
 单文件便携 EXE，双击即用：自动对接**已登录的原版 QQ**，无窗口、托盘常驻、自动打开浏览器。
-EXE 本体只是**核心 + 启动器**：面板 / OneBot API / MCP 远控同机部署，功能全部通过 modules 模块扩展。
+EXE 本体只是**核心 + 启动器**：面板 / OneBot API 同机部署，功能全部通过 modules 模块扩展。
 
 ## 使用
 
@@ -29,7 +29,7 @@ EXE 本体只是**核心 + 启动器**：面板 / OneBot API / MCP 远控同机�
 |---|---|
 | **模块** | 二级导航列出所有已安装模块；选中模块显示它**自带的配置界面**。把模块放进 modules 文件夹后约 3 秒自动出现（自动热重载），无需重启 |
 | **AI 配置** | OpenAI 兼容格式：API 地址 + API 密钥 + 模型 ID，可一键测试对话。模块通过 `app.ai.chat(messages)` 调用 |
-| **概览** | QQ 进程状态、OneBot 连接、实时事件流、动作测试、重载模块、关闭框架、MCP 状态与 token |
+| **概览** | QQ 进程状态、OneBot 连接、实时事件流、动作测试、重载模块、关闭框架 |
 
 托盘右键：打开管理面板 / 打开模块文件夹 / 退出框架。
 
@@ -63,7 +63,6 @@ reply = await app.ai.chat([{"role": "user", "content": "你好"}])   # 调用 AI
 | `web.password` | 面板密码哈希（首次在网页上设置，不用手改） |
 | `onebot.access_token` | **QQ 侧 API 密钥**，QQ 侧连入/调用 OneBot API 必须携带 |
 | `ai.*` | API 地址 / 密钥 / 模型 ID（OpenAI 兼容格式，面板里填更方便） |
-| `mcp.token` | MCP 远控密钥（首次运行自动生成，概览页可见） |
 | `inject.enabled / dll_path` | 自动注入 hook DLL（默认关） |
 
 ## 对接 QQ（二选一）
@@ -82,44 +81,30 @@ POST http://<ip>:2280/onebot/v11/send_private_msg?access_token=xxx
      body: {"user_id": 123456, "message": "hello"}
 ```
 
-## MCP 远程控制（隧道穿透）
+## 远程访问面板（隧道穿透）
 
-核心内置 MCP 服务器（Streamable HTTP，端口 2281，Bearer token 鉴权），
-工具：`run_command` / `screenshot` / `left_click` / `right_click` / `double_click` / `type_text` / `press_key` / `list_dir` / `read_file` / `write_file`。
-
-隧道用配套的 **隧道助手 TunnelHelper.exe**（黑窗口，基于 Cloudflare Tunnel，免费不用注册，
-比 localtunnel 稳定，窗口开着就一直有效）：
+云电脑没有公网 IP 时，用配套的 **隧道助手 TunnelHelper.exe**（黑窗口，基于
+Cloudflare Tunnel，免费不用注册，比 localtunnel 稳定，窗口开着就一直有效）把
+管理面板端口暴露出去，在任何浏览器远程打开面板：
 
 1. 把 `TunnelHelper.exe` 和 `cloudflared.exe` 放同一目录，双击运行
-2. 输入要暴露的本机端口（回车默认 2281），协议回车默认 http2
+2. 输入要暴露的本机端口（回车默认 2280），协议回车默认 http2
 3. 窗口显示 `https://xxxx.trycloudflare.com` 公网地址，最小化窗口保持隧道
-4. 在支持 MCP 的客户端（如 ZCode）中添加：
+4. 任何设备浏览器打开该地址，输入面板密码即可远程管理
 
-```json
-{
-  "mcpServers": {
-    "cloudpc": {
-      "type": "http",
-      "url": "http://<隧道地址>/mcp",
-      "headers": {"Authorization": "Bearer <MCP token>"}
-    }
-  }
-}
-```
-
-token 在面板「概览」页或 `config.json` 的 `mcp.token` 查看。
 注意：断线自动重连，但重连后公网地址会变（窗口会显示新地址）。
 
-#### 隧道连上就断、反复重连？（重要）
+#### 隧道连上就断 / 一直握手失败？（重要）
 
-如果云电脑上**开着代理软件**（Clash / v2rayN TUN 模式等），代理会拦截 cloudflared
+如果机器上**开着代理软件**（Clash / v2rayN TUN 模式等），代理会拦截 cloudflared
 与 Cloudflare 边缘节点的专用连接（`*.argotunnel.com`，日志表现为
-`TLS handshake with edge error: EOF` 或 QUIC 超时），导致隧道刚建立就断、无限重连。
-解决办法（任选其一）：
+`TLS handshake with edge error: EOF` / QUIC 超时 / x509 证书错误），导致隧道
+永远握不上手。解决办法（任选其一）：
 
 1. 代理软件里给 **cloudflared.exe 进程加 DIRECT（直连）规则**（推荐）
 2. 或在代理里放行域名 `*.argotunnel.com` 和 `*.trycloudflare.com`
 3. 或跑隧道时临时退出代理 / 关闭 TUN 模式（浏览器走代理不受影响，可开回系统代理）
+4. 若报 `x509: certificate has expired or is not yet valid`，先检查**系统时间**是否准确（云桌面虚机常见时钟漂移），不准先同步时间
 
 同理，其他装了代理的机器上用隧道助手也会遇到此问题，处理方式相同。
 

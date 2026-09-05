@@ -148,8 +148,6 @@ class WebServer:
             "modules": self.app.plugins.list_modules(),
             "modules_dir": MODULES_DIR,
             "server_port": self.app.config["server"]["port"],
-            "mcp_enabled": self.app.mcp.running,
-            "mcp_token": self.app.config["mcp"].get("token", "") if self.app.mcp.running else "",
         }
 
     async def handle_status(self, request):
