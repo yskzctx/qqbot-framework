@@ -126,25 +126,28 @@ class App:
             except Exception:
                 log.exception("模块 %s on_config 出错", name)
 
-    # ---------- 模块文件夹监视（放入/删除模块自动重载） ----------
+    # ---------- 模块文件夹监视（新增/修改/删除 自动热重载） ----------
 
-    def _module_files(self) -> set:
+    def _module_state(self) -> dict:
         try:
-            return {f for f in os.listdir(MODULES_DIR) if f.endswith(".py")}
+            return {f: os.stat(os.path.join(MODULES_DIR, f)).st_mtime
+                    for f in os.listdir(MODULES_DIR) if f.endswith(".py")}
         except FileNotFoundError:
-            return set()
+            return {}
 
     async def _modules_watcher(self):
-        known = self._module_files()
+        known = self._module_state()
         while True:
             await asyncio.sleep(3)
             try:
-                current = self._module_files()
+                current = self._module_state()
                 if current != known:
-                    added = current - known
-                    removed = known - current
-                    log.info("检测到模块文件变动（新增: %s，移除: %s），自动重载",
-                             sorted(added), sorted(removed))
+                    added = set(current) - set(known)
+                    removed = set(known) - set(current)
+                    modified = {f for f in set(current) & set(known)
+                                if current[f] != known[f]}
+                    log.info("检测到模块变动（新增: %s，移除: %s，修改: %s），自动重载",
+                             sorted(added), sorted(removed), sorted(modified))
                     known = current
                     await asyncio.get_running_loop().run_in_executor(
                         None, self.plugins.reload_all)

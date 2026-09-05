@@ -1,19 +1,24 @@
-"""模块（插件）管理器。
+"""模块（插件）管理器 —— 万物皆可插件。
 
-模块放在 QQBotData/modules/ 下。每个模块 = 一个 .py 文件，可选配套同名 .html
-作为它在面板中的配置界面。约定：
+模块 = QQBotData/modules/ 下一个 .py 文件（可带同名 .html 作为配置界面）。
 
+支持的全部写法（均可选，可混用）：
     MODULE_INFO = {"name": "显示名", "description": "描述", "version": "0.1"}
-    def register(app):                 # 可选，加载时调用一次
-    async def on_event(bot, event):    # 可选，收到 OneBot 事件
-    def on_config(app, config):        # 可选，面板保存该模块配置时调用
+    PRIORITY = 100                       # 事件处理顺序，越小越先
 
-模块数据存储在 QQBotData/data/<模块名>.json（面板自动读写），不会回写模块文件。
+    def register(app): ...               # 加载时
+    def on_config(app, config): ...      # 面板保存该模块配置时
+    def on_unload(app): ...              # 卸载/重载前（清理线程、连接等）
+    async def on_event(bot, event): ...  # 传统事件处理；返回 False 拦截后续模块
 
-同名 .html 即模块配置界面，服务在 /api/modules/<模块文件名>/ui；
-界面 JS 可用 ?token= 会话令牌调用 /api/modules/<名>/config 读写自身数据。
+    from framework.plugins import cmd, api, event
+    @cmd("签到")  async def f(bot, ev, args)   # 聊天命令，args=剩余参数
+    @cmd("危险", admin=True)                    # 仅管理员
+    @event(priority=10)  async def f(bot, ev)  # 事件订阅，返回 False 拦截
+    @api("GET", "/x")    async def f(bot, req) # 自有 API: /api/m/<文件名>/x
 
-modules 文件夹有任何变动（新增/删除 .py）都会被自动检测并热重载。
+数据存 QQBotData/data/<文件名>.json（bot.app.get/set_module_config）。
+modules 文件夹内容或修改时间变化都会自动热重载。
 """
 import asyncio
 import importlib.util
@@ -25,103 +30,90 @@ from framework.paths import MODULES_DIR
 
 log = logging.getLogger("modules")
 
-EXAMPLE_PY = '''"""示例模块：欢迎与 /ping。演示 MODULE_INFO 元数据 + 配套配置界面。"""
+EXAMPLE_PY = '''"""示例模块：演示命令 / 事件 / API / 配置界面（example_welcome.html）。"""
+from framework.plugins import cmd, api
 
-MODULE_INFO = {"name": "欢迎助手", "description": "私聊回复你好；/ping 测活", "version": "0.1"}
+MODULE_INFO = {"name": "欢迎助手", "description": "示例：命令+事件+API", "version": "0.2"}
 
 
-def on_config(app, config):
-    print("[欢迎助手] 配置已更新:", config)
+@cmd("你好")
+async def hello(bot, event, args):
+    cfg = bot.app.get_module_config("example_welcome")
+    await bot.send_private_msg(event["user_id"], cfg.get("welcome_text", "你好~"))
 
 
 async def on_event(bot, event):
-    if event.get("post_type") != "message":
-        return
-    raw = str(event.get("raw_message", "")).strip()
-    cfg = app.get_module_config("example_welcome")
-    welcome = cfg.get("welcome_text") or "你好，我是基于原版 QQ 运行的机器人~"
-
-    if raw == "/ping":
-        text = "pong! 核心运行正常，模块已加载"
-        if event.get("message_type") == "group":
-            await bot.send_group_msg(event["group_id"], text)
-        else:
-            await bot.send_private_msg(event["user_id"], text)
-    elif event.get("message_type") == "private" and raw == "你好":
-        await bot.send_private_msg(event["user_id"], welcome)
+    if event.get("raw_message") == "/ping":
+        await bot.send_private_msg(event["user_id"], "pong! 模块正常")
 '''
 
 EXAMPLE_HTML = '''<!DOCTYPE html>
 <html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
+<head><meta charset="UTF-8">
 <style>
-  body { font-family: "Microsoft YaHei", sans-serif; color: #e6edf3;
-         background: transparent; padding: 6px 2px; }
-  label { display: block; font-size: 13px; color: #8b98a5; margin: 10px 0 6px; }
-  input, textarea { width: 100%; max-width: 480px; background: #212a33; color: #e6edf3;
-    border: 1px solid #2c3742; border-radius: 8px; padding: 9px 12px; font-size: 13px;
-    outline: none; box-sizing: border-box; }
-  input:focus, textarea:focus { border-color: #4c8dff; }
+  body { font-family: "Microsoft YaHei", sans-serif; color: #e6edf3; padding: 6px 2px; }
+  input { width: 90%; max-width: 420px; background: #212a33; color: #e6edf3;
+    border: 1px solid #2c3742; border-radius: 8px; padding: 9px 12px; font-size: 13px; }
   button { background: #4c8dff; color: #fff; border: 0; border-radius: 8px;
-    padding: 9px 20px; font-size: 13px; cursor: pointer; margin-top: 14px; }
-  #tip { margin-top: 10px; font-size: 12px; color: #2ea86b; min-height: 16px; }
-</style>
-</head>
+    padding: 8px 18px; cursor: pointer; margin-top: 12px; }
+  #tip { margin-top: 10px; font-size: 12px; color: #2ea86b; }
+</style></head>
 <body>
-  <h3 style="margin:4px 0 2px;font-size:15px">欢迎助手 — 配置</h3>
-  <p style="font-size:12px;color:#8b98a5;margin:0 0 4px">数据保存在 QQBotData/data/，不会修改模块文件</p>
-  <label>私聊"你好"时的回复内容</label>
-  <input id="welcomeText" placeholder="你好，我是基于原版 QQ 运行的机器人~">
-  <button onclick="save()">保存</button>
+  <h3 style="font-size:15px">欢迎助手 — 配置</h3>
+  <label style="display:block;font-size:12px;color:#8b98a5;margin:10px 0 6px">私聊"你好"的回复内容</label>
+  <input id="welcome_text" placeholder="你好，我是基于原版 QQ 运行的机器人~">
+  <br><button onclick="save()">保存</button>
   <div id="tip"></div>
 <script>
-const token = new URLSearchParams(location.search).get("token") || "";
+const H = {"Content-Type": "application/json",
+           "X-Access-Token": new URLSearchParams(location.search).get("token") || ""};
 const base = "/api/modules/example_welcome/config";
-const H = {"Content-Type": "application/json", "X-Access-Token": token};
-
+load();
 async function load(){
-  try {
-    const r = await fetch(base, {headers: H});
-    const cfg = await r.json();
-    if (cfg.welcome_text) document.getElementById("welcomeText").value = cfg.welcome_text;
-  } catch(e) { tip("加载失败: " + e.message, true); }
+  try { const c = await (await fetch(base, {headers:H})).json();
+        if (c.welcome_text) document.getElementById("welcome_text").value = c.welcome_text;
+  } catch(e){ document.getElementById("tip").textContent = "加载失败"; }
 }
 async function save(){
-  const welcome_text = document.getElementById("welcomeText").value;
-  try {
-    const r = await fetch(base, {method: "POST", headers: H,
-      body: JSON.stringify({config: {welcome_text}})});
-    const d = await r.json();
-    tip(d.ok ? "已保存 ✓" : "保存失败: " + d.error, !d.ok);
-  } catch(e) { tip("保存失败: " + e.message, true); }
+  const welcome_text = document.getElementById("welcome_text").value;
+  const r = await fetch(base, {method:"POST", headers:H, body: JSON.stringify({config:{welcome_text}})});
+  document.getElementById("tip").textContent = (await r.json()).ok ? "已保存 ✓" : "保存失败";
 }
-function tip(msg, err){ const t = document.getElementById("tip");
-  t.textContent = msg; t.style.color = err ? "#e5534b" : "#2ea86b"; }
-load();
-</script>
-</body>
-</html>
+</script></body></html>
 '''
+
+
+class _Sub:
+    """事件订阅者。"""
+    __slots__ = ("priority", "post_type", "func", "module")
+
+    def __init__(self, priority, post_type, func, module):
+        self.priority = priority
+        self.post_type = post_type
+        self.func = func
+        self.module = module
 
 
 class ModuleManager:
     def __init__(self, app):
         self.app = app
-        self.modules: dict[str, object] = {}   # 模块文件名 -> 模块对象
-        self.meta: dict[str, dict] = {}        # 模块文件名 -> MODULE_INFO
-        self._ensure_example()
+        self.modules: dict[str, object] = {}
+        self.meta: dict[str, dict] = {}
+        self._cmds: dict[str, tuple[str, object, bool]] = {}       # name -> (module, func, admin)
+        self._apis: dict[tuple[str, str, str], tuple[object, bool]] = {}  # (module, method, path) -> (func, admin)
+        self._subs: list[_Sub] = []
+        self._example()
 
-    def _ensure_example(self):
+    # ---------- 加载 / 卸载 ----------
+
+    def _example(self):
         os.makedirs(MODULES_DIR, exist_ok=True)
         py = os.path.join(MODULES_DIR, "example_welcome.py")
         if not os.path.exists(py):
-            with open(py, "w", encoding="utf-8") as f:
-                f.write(EXAMPLE_PY)
+            open(py, "w", encoding="utf-8").write(EXAMPLE_PY)
         html = os.path.join(MODULES_DIR, "example_welcome.html")
         if not os.path.exists(html):
-            with open(html, "w", encoding="utf-8") as f:
-                f.write(EXAMPLE_HTML)
+            open(html, "w", encoding="utf-8").write(EXAMPLE_HTML)
 
     def load_all(self):
         if MODULES_DIR not in sys.path:
@@ -129,29 +121,25 @@ class ModuleManager:
         for fname in sorted(os.listdir(MODULES_DIR)):
             if fname.endswith(".py") and not fname.startswith("_"):
                 self._load(fname[:-3])
+        self._subs.sort(key=lambda s: s.priority)
 
     def reload_all(self) -> list[str]:
-        """卸载全部已加载模块后重新扫描 modules/ 目录。"""
-        for name in list(self.modules):
+        for name, module in self.modules.items():
+            hook = getattr(module, "on_unload", None)
+            if hook:
+                try:
+                    hook(self.app)
+                except Exception:
+                    log.exception("模块 %s on_unload 出错", name)
             sys.modules.pop(f"qqbot_module_{name}", None)
         self.modules.clear()
         self.meta.clear()
+        self._cmds.clear()
+        self._apis.clear()
+        self._subs.clear()
         self.load_all()
         log.info("模块已重载，共 %d 个: %s", len(self.modules), list(self.modules))
         return list(self.modules)
-
-    def list_modules(self) -> list[dict]:
-        out = []
-        for name, module in self.modules.items():
-            info = self.meta.get(name, {})
-            out.append({
-                "file": name,
-                "name": info.get("name", name),
-                "description": info.get("description", ""),
-                "version": info.get("version", ""),
-                "has_ui": os.path.exists(os.path.join(MODULES_DIR, name + ".html")),
-            })
-        return sorted(out, key=lambda m: m["file"])
 
     def _load(self, name: str):
         path = os.path.join(MODULES_DIR, name + ".py")
@@ -163,26 +151,95 @@ class ModuleManager:
                 module.register(self.app)
             self.modules[name] = module
             self.meta[name] = getattr(module, "MODULE_INFO", {}) or {}
-            desc = self.meta[name].get("description", "")
-            log.info("模块已加载: %s %s", name, f"({desc})" if desc else "")
+            priority = getattr(module, "PRIORITY", 100)
+
+            # 扫描装饰器标记
+            for obj in vars(module).values():
+                mark = getattr(obj, "_qqbot_cmd", None)
+                if mark:
+                    self._cmds[mark[0]] = (name, obj, mark[1])
+                mark = getattr(obj, "_qqbot_api", None)
+                if mark:
+                    self._apis[(name, mark[0], mark[1])] = (obj, False)
+                mark = getattr(obj, "_qqbot_event", None)
+                if mark:
+                    self._subs.append(_Sub(mark[1], mark[0], obj, name))
+
+            # 传统 on_event 作为默认优先级的事件订阅者
+            handler = getattr(module, "on_event", None)
+            if handler and not getattr(module, "PRIORITY_HANDLED", False):
+                self._subs.append(_Sub(priority, None, handler, name))
+            log.info("模块已加载: %s%s", name,
+                     f"（{self.meta[name].get('description', '')}）"
+                     if self.meta[name].get("description") else "")
         except Exception:
             log.exception("模块加载失败: %s", path)
 
-    def dispatch(self, event: dict):
-        bot = self.app.bot
+    # ---------- 查询 ----------
+
+    def list_modules(self) -> list[dict]:
+        out = []
         for name, module in self.modules.items():
-            handler = getattr(module, "on_event", None)
-            if not handler:
+            info = self.meta.get(name, {})
+            cmds = [n for n, (m, _, _) in self._cmds.items() if m == name]
+            apis = [f"{m} {p}" for (mn, m, p) in self._apis if mn == name]
+            out.append({
+                "file": name,
+                "name": info.get("name", name),
+                "description": info.get("description", ""),
+                "version": info.get("version", ""),
+                "has_ui": os.path.exists(os.path.join(MODULES_DIR, name + ".html")),
+                "commands": sorted(cmds),
+                "apis": sorted(apis),
+            })
+        return sorted(out, key=lambda m: m["file"])
+
+    def match_command(self, raw: str):
+        """消息匹配命令 -> (func, args, admin)；无匹配返回 None。"""
+        for name in sorted(self._cmds, key=len, reverse=True):
+            if raw == name or raw.startswith(name + " "):
+                module, func, admin = self._cmds[name]
+                return func, raw[len(name):].split(), admin, name
+        return None
+
+    def resolve_api(self, module: str, method: str, path: str):
+        return self._apis.get((module, method.upper(), path))
+
+    # ---------- 事件分发（串行管道，支持拦截） ----------
+
+    def dispatch(self, event: dict):
+        asyncio.ensure_future(self._dispatch(event))
+
+    async def _dispatch(self, event: dict):
+        bot = self.app.bot
+        # 命令优先：命中即独占处理
+        if event.get("post_type") == "message":
+            raw = str(event.get("raw_message", "")).strip()
+            hit = self.match_command(raw)
+            if hit:
+                func, args, admin, name = hit
+                try:
+                    if admin and not self.app.is_admin(event.get("user_id")):
+                        text = "该命令仅管理员可用"
+                        if event.get("message_type") == "group":
+                            await bot.send_group_msg(event["group_id"], text)
+                        else:
+                            await bot.send_private_msg(event["user_id"], text)
+                    else:
+                        await func(bot, event, args)
+                except Exception:
+                    log.exception("命令 %s 处理出错", name)
+                return
+
+        # 事件订阅者：按优先级串行执行，返回 False 拦截后续
+        for sub in self._subs:
+            if sub.post_type and event.get("post_type") != sub.post_type:
                 continue
             try:
-                result = handler(bot, event)
+                result = sub.func(bot, event)
                 if asyncio.iscoroutine(result):
-                    asyncio.create_task(self._safe(name, result))
+                    result = await result
+                if result is False:
+                    return
             except Exception:
-                log.exception("模块 %s 事件处理出错", name)
-
-    async def _safe(self, name: str, coro):
-        try:
-            await coro
-        except Exception:
-            log.exception("模块 %s 异步处理出错", name)
+                log.exception("模块 %s 事件处理出错", sub.module)

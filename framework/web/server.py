@@ -62,6 +62,9 @@ class WebServer:
         web_app.router.add_get("/api/modules/{name}/ui", self.handle_module_ui)
         web_app.router.add_get("/api/modules/{name}/config", self.handle_module_config_get)
         web_app.router.add_post("/api/modules/{name}/config", self.handle_module_config_set)
+        # 模块自有 API（万物皆可插件）：/api/m/<模块文件名>/<路径>
+        web_app.router.add_route("*", "/api/m/{module}", self.handle_module_api)
+        web_app.router.add_route("*", "/api/m/{module}/{tail:.*}", self.handle_module_api)
         # AI
         web_app.router.add_get("/api/ai/config", self.handle_ai_config_get)
         web_app.router.add_post("/api/ai/config", self.handle_ai_config_set)
@@ -224,6 +227,20 @@ class WebServer:
             return web.json_response({"ok": False, "error": "bad request"}, status=400)
         self.app.set_module_config(name, body.get("config", {}))
         return web.json_response({"ok": True})
+
+    async def handle_module_api(self, request):
+        if not self._authorized(request):
+            return web.json_response({"error": "unauthorized"}, status=401)
+        module = request.match_info["module"]
+        tail = "/" + request.match_info.get("tail", "")
+        entry = self.app.plugins.resolve_api(module, request.method, tail)
+        if not entry:
+            return web.json_response({"error": "not found"}, status=404)
+        try:
+            return await entry[0](self.app.bot, request)
+        except Exception as e:
+            log.exception("模块 API 出错: %s%s", module, tail)
+            return web.json_response({"error": str(e)}, status=500)
 
     # ---------- AI API ----------
 
