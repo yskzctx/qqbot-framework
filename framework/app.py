@@ -41,7 +41,7 @@ class App:
 
     async def run(self):
         self._shutdown = asyncio.Event()
-        self.bot = BotAPI(self.onebot)
+        self.bot = BotAPI(self)
 
         await self.web.start()              # 面板 + OneBot API 同端口
         self.plugins.load_all()
@@ -68,6 +68,13 @@ class App:
         """线程安全：托盘/Web 都通过它触发退出。"""
         if self._shutdown and not self._shutdown.is_set():
             self._shutdown.set()
+
+    # ---------- 权限 ----------
+
+    def is_admin(self, user_id) -> bool:
+        """判断是否为管理员（config -> permissions.admins）。"""
+        admins = self.config.get("permissions", {}).get("admins", [])
+        return str(user_id) in [str(a).strip() for a in admins if str(a).strip()]
 
     # ---------- 事件流 ----------
 

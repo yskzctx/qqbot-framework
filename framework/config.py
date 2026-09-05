@@ -28,6 +28,10 @@ DEFAULT_CONFIG = {
         "api_key": "",
         "model": "",
     },
+    # 权限：管理员 QQ 号列表（所有模块共享，系统级操作需要管理员身份）
+    "permissions": {
+        "admins": ["在这里填你的QQ号"],
+    },
     "qq": {
         "process_names": ["QQ.exe"],
         "poll_interval": 5,

@@ -26,5 +26,14 @@ class BotAPI:
     async def get_stranger_info(self, user_id: int) -> dict:
         return await self.call_action("get_stranger_info", {"user_id": user_id})
 
+    def is_admin(self, user_id) -> bool:
+        return self.app.is_admin(user_id)
+
+    def get_module_config(self, name: str) -> dict:
+        return self.app.get_module_config(name)
+
+    def set_module_config(self, name: str, cfg: dict):
+        self.app.set_module_config(name, cfg)
+
     async def delete_msg(self, message_id: int) -> dict:
         return await self.call_action("delete_msg", {"message_id": message_id})
