@@ -8,3 +8,5 @@ logs/
 tunnel_build/
 cloudflared.exe
 *.log
+napcat_embed/
+*.zip
