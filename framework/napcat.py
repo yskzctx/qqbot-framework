@@ -139,24 +139,51 @@ class NapCatManager:
     # ---------- 兼容旧方式（重启 QQ 注入，一般不用） ----------
 
     def launch(self) -> tuple[bool, str]:
-        """兼容旧方式：关闭 QQ 后带钩子重启（一般用免重启注入即可）。"""
+        """后台开始注入（立即返回），结果通过 status/last_error 轮询。"""
+        account = str(self.cfg.get("account", "")).strip()
+        if not account.isdigit():
+            return False, "未配置机器人 QQ 号（小号）"
+        self.status = "注入中..."
+        self.last_error = ""
+        threading.Thread(target=self._launch_blocking, daemon=True,
+                         name="napcat-launch").start()
+        return True, "注入已在后台开始，QQ 将自动重启一次并恢复登录（约 20 秒）"
+
+    def _launch_blocking(self):
+        try:
+            self.__launch_inner()
+        except Exception as e:
+            log.exception("NapCat 注入线程异常")
+            self.status = "失败"
+            self.last_error = f"{e.__class__.__name__}: {e}"
+
+    def __launch_inner(self):
         cfg = self.cfg
         account = str(cfg.get("account", "")).strip()
         if not account.isdigit():
-            return False, "未配置机器人 QQ 号（小号）"
+            self.status = "失败"
+            self.last_error = "未配置机器人 QQ 号（小号）"
+            return
+        self.status = "部署 NapCat 核心..."
         if not self.ensure_deployed():
-            return False, self.last_error
+            self.status = "失败"
+            self.last_error = self.last_error or "NapCat 核心部署失败"
+            return
         qq_path = self.find_qq()
         if not qq_path:
-            return False, "未找到本机 QQ 安装路径（QQNT）"
+            self.status = "失败"
+            self.last_error = "未找到本机 QQ 安装路径（QQNT）"
+            return
         self.write_onebot_config(account)
+        self.status = "注入启动 QQ..."
 
         if cfg.get("auto_close_qq", True):
             subprocess.run(["taskkill", "/IM", "QQ.exe", "/F"],
                            capture_output=True)
             import time
             time.sleep(2)
-        main_path = os.path.join(core, "napcat", "napcat.mjs").replace("\\", "/")
+        core = self.core_dir
+        main_path = os.path.join(core, "napcat.mjs").replace("\\", "/")
 
         env = os.environ.copy()
         env["NAPCAT_PATCH_PACKAGE"] = os.path.join(core, "qqnt.json")
@@ -191,25 +218,25 @@ class NapCatManager:
                     break
             tail = open(log_path, "rb").read()[-800:].decode("gbk", "replace")
             if proc.poll() is not None:
-                self.status = "注入启动失败"
+                self.status = "失败"
                 self.last_error = f"NapCat 启动器已退出。输出: {tail}"
                 log.error("NapCat 启动器退出，输出: %s", tail)
-                return False, f"注入失败，NapCat 输出: {tail}"
+                return
             new_qq = len([p for p in _psutil.process_iter(["name"])
                           if (p.info["name"] or "").lower() == "qq.exe"])
             if new_qq <= len(before):
-                self.status = "注入启动失败"
+                self.status = "失败"
                 self.last_error = f"QQ 未能启动。NapCat 输出: {tail}"
                 log.error("QQ 未能启动，NapCat 输出: %s", tail)
-                return False, f"注入失败，QQ 未能启动。NapCat 输出: {tail}"
+                return
             self.status = "已注入启动"
             log.info("NapCat 注入启动完成: QQ=%s 小号=%s", qq_path, account)
-            return True, "已注入启动，QQ 窗口即将出现（首次需登录一次小号）"
+            return
         except Exception as e:
-            self.status = "启动失败"
+            self.status = "失败"
             self.last_error = str(e)
             log.exception("NapCat 启动失败")
-            return False, f"启动失败: {e}"
+            return
 
     # ---------- 状态 ----------
 
@@ -224,4 +251,13 @@ class NapCatManager:
             "status": self.status,
             "last_error": self.last_error,
             "qq_found": bool(self.find_qq()),
+            "log_tail": self._launch_log_tail(),
         }
+
+    def _launch_log_tail(self) -> str:
+        try:
+            path = os.path.join(self.core_dir, "launch.log")
+            with open(path, "rb") as f:
+                return f.read()[-500:].decode("gbk", "replace")
+        except OSError:
+            return ""

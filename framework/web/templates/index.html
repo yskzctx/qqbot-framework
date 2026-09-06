@@ -641,10 +641,16 @@ async function loadNapcat(){
     const r = await fetch("/api/napcat/status", {headers: H()});
     if (r.status === 401) return;
     const d = await r.json();
-    $("ncAccount").value = d.account || "";
-    $("ncState").textContent = (d.deployed ? "核心已部署 v" + d.version : "核心未部署") +
+    if (document.activeElement !== $("ncAccount"))
+      $("ncAccount").value = d.account || "";   // 正在输入时不覆盖
+    let txt = (d.deployed ? "核心已部署 v" + d.version : "核心未部署") +
       " · " + d.status + (d.qq_found ? "" : " · 未找到本机QQ") +
       (d.last_error ? " · 错误: " + d.last_error.slice(0, 160) : "");
+    if (d.log_tail) txt += "
+--- NapCat 输出 ---
+" + d.log_tail;
+    $("ncState").textContent = txt;
+    $("ncState").style.whiteSpace = "pre-wrap";
   } catch(e){}
 }
 async function saveNapcatAccount(){
@@ -657,14 +663,14 @@ async function saveNapcatAccount(){
   else alert(d.error);
 }
 async function launchNapcat(){
-  $("ncState").textContent = "注入中...QQ 将自动重启一次并自动恢复登录（约 20 秒）";
   try {
-    const r = await fetch("/api/napcat/launch?mode=attach",{method:"POST",headers:H()});
+    const r = await fetch("/api/napcat/launch",{method:"POST",headers:H()});
     const d = await r.json();
     $("ncState").textContent = d.message;
-    loadNapcat();
-  } catch(e){ $("ncState").textContent = "请求失败"; }
+  } catch(e){ $("ncState").textContent = "请求失败: " + e.message; }
+  loadNapcat();
 }
+setInterval(loadNapcat, 3000);
 
 async function refresh(){
   try {

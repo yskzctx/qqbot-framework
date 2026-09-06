@@ -15,6 +15,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import argparse
+
 from framework import paths
 from framework.config import load_config
 from framework.logger import setup_logger
@@ -32,8 +34,13 @@ def _fatal(msg: str):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="QQ 机器人核心")
+    parser.add_argument("--config", default=paths.CONFIG_PATH, help="配置文件路径")
+    parser.add_argument("--no-tray", action="store_true", help="不启动托盘图标")
+    args = parser.parse_args()
+
     paths.ensure_dirs()
-    config = load_config(paths.CONFIG_PATH)
+    config = load_config(args.config)
     log = setup_logger(config.get("log_level", "INFO"))
 
     app = App(config)

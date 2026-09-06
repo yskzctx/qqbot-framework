@@ -17,6 +17,7 @@ AI 配置：
 """
 import asyncio
 import json
+import threading
 import logging
 import os
 import time
@@ -337,7 +338,8 @@ class WebServer:
     async def handle_napcat_status(self, request):
         if not self._authorized(request):
             return web.json_response({"error": "unauthorized"}, status=401)
-        return web.json_response(self.app.napcat.snapshot())
+        snap = self.app.napcat.snapshot()
+        return web.json_response(snap)
 
     async def handle_napcat_account(self, request):
         if not self._authorized(request):
@@ -357,9 +359,10 @@ class WebServer:
     async def handle_napcat_launch(self, request):
         if not self._authorized(request):
             return web.json_response({"error": "unauthorized"}, status=401)
-        ok, msg = await asyncio.get_running_loop().run_in_executor(
-            None, self.app.napcat.launch)
-        return web.json_response({"ok": ok, "message": msg}, status=200 if ok else 502)
+        # 立即返回，注入在后台线程执行；面板轮询 /api/napcat/status 看结果
+        threading.Thread(target=self.app.napcat.launch, daemon=True).start()
+        return web.json_response({"ok": True,
+                                  "message": "注入已在后台开始（QQ 将自动重启一次并恢复登录）"})
 
     # ---------- AI API（多配置列表） ----------
 
