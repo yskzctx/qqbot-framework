@@ -65,6 +65,10 @@ reply = await app.ai.chat([{"role": "user", "content": "你好"}])   # 调用 AI
 | `ai.*` | API 地址 / 密钥 / 模型 ID（OpenAI 兼容格式，面板里填更方便） |
 | `inject.enabled / dll_path` | 自动注入 hook DLL（默认关） |
 
+## 官方模块与开发文档
+
+模块合集与**完整模块开发指南**见：https://github.com/yskzctx/qqbot-modules
+
 ## 对接 QQ（已内置，全自动）
 
 NapCat 已内嵌在 EXE 里，**无需手动安装**：
