@@ -72,7 +72,7 @@ class NapCatManager:
             log.error(self.last_error)
             return False
         if self.deployed_version() == embedded and \
-                os.path.exists(os.path.join(self.core_dir, "napcat.mjs")):
+                os.path.exists(os.path.join(self.core_dir, "napcat", "napcat.mjs")):
             return True
         try:
             if os.path.exists(self.core_dir):
@@ -156,16 +156,7 @@ class NapCatManager:
                            capture_output=True)
             import time
             time.sleep(2)
-
-        core = self.core_dir
-        main_path = os.path.join(core, "napcat.mjs").replace("\\", "/")
-        loader = ("const path = require('path');\n"
-                  "const CurrentPath = path.dirname(__filename);\n"
-                  "(async () => {\n"
-                  f"  await import('file:///{main_path}');\n"
-                  "})();\n")
-        with open(os.path.join(core, "loadNapCat.js"), "w", encoding="utf-8") as f:
-            f.write(loader)
+        main_path = os.path.join(core, "napcat", "napcat.mjs").replace("\\", "/")
 
         env = os.environ.copy()
         env["NAPCAT_PATCH_PACKAGE"] = os.path.join(core, "qqnt.json")
