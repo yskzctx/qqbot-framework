@@ -136,7 +136,10 @@ class NapCatManager:
 
     # ---------- 启动注入 ----------
 
+    # ---------- 兼容旧方式（重启 QQ 注入，一般不用） ----------
+
     def launch(self) -> tuple[bool, str]:
+        """兼容旧方式：关闭 QQ 后带钩子重启（一般用免重启注入即可）。"""
         cfg = self.cfg
         account = str(cfg.get("account", "")).strip()
         if not account.isdigit():
@@ -155,7 +158,6 @@ class NapCatManager:
             time.sleep(2)
 
         core = self.core_dir
-        # 复刻 NapCat 官方 launcher.bat：写 loadNapCat.js + 设环境变量 + 带钩子启动
         main_path = os.path.join(core, "napcat.mjs").replace("\\", "/")
         loader = ("const path = require('path');\n"
                   "const CurrentPath = path.dirname(__filename);\n"

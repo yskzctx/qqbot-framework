@@ -167,7 +167,8 @@
         <span class="sub" id="ncState"></span>
       </div>
       <div class="sub" style="margin-top:8px">
-        首次注入后请在弹出的 QQ 窗口登录小号（扫码或快速登录），登录一次后以后自动快速登录。
+        点击注入后 QQ 会自动重启一次（约 20 秒，自动恢复登录，聊天记录不受影响），
+        之后 QQ 与机器人长期稳定运行。首次需要登录一次小号，之后自动快速登录。
         框架本身没有任何功能，所有功能由模块提供。
       </div>
     </div>
@@ -405,9 +406,9 @@ async function saveNapcatAccount(){
   else alert(d.error);
 }
 async function launchNapcat(){
-  $("ncState").textContent = "注入中...（QQ 将自动重启）";
+  $("ncState").textContent = "注入中...QQ 将自动重启一次并自动恢复登录（约 20 秒）";
   try {
-    const r = await fetch("/api/napcat/launch",{method:"POST",headers:H()});
+    const r = await fetch("/api/napcat/launch?mode=attach",{method:"POST",headers:H()});
     const d = await r.json();
     $("ncState").textContent = d.message;
     loadNapcat();
