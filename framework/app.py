@@ -1,12 +1,20 @@
-"""App：整合所有模块，是框架的核心对象。"""
+"""QQ 机器人框架核心。
+
+职责（也仅有这些）：
+1. 管理 NapCat 注入与 QQ 本体的启动
+2. 运行 OneBot 11 服务端：QQ 事件 → 模块，模块动作 → QQ（纯透传）
+3. 提供面板（AI 配置 / 联系人分组 / 消息数据库 / 模块管理）
+4. 消息入库与自动清理
+
+铁律：事件循环内不允许任何阻塞操作（sqlite/文件/子进程/网络一律进线程池）。
+"""
 import asyncio
 import json
 import logging
 import os
 import time
-import webbrowser
-from datetime import datetime
 from collections import deque
+from datetime import datetime
 
 import framework
 from framework.ai import AIService
@@ -14,7 +22,7 @@ from framework.bot import BotAPI
 from framework.msgdb import MessageDB
 from framework.napcat import NapCatManager
 from framework.onebot import OneBotServer
-from framework.paths import DATA_DIR, DATA_STORE_DIR, MODULES_DIR, app_root
+from framework.paths import DATA_DIR, DATA_STORE_DIR, MODULES_DIR
 from framework.plugins import ModuleManager
 from framework.process import QQProcessMonitor
 from framework.web import WebServer
@@ -27,62 +35,35 @@ class App:
 
     def __init__(self, config):
         self.config = config
+        self.log = log
         self.start_time = time.time()
-        self.qq_info = None                 # QQ 进程快照（由 QQProcessMonitor 更新）
-        self.recent_events = deque(maxlen=300)
-        self.contacts = {"friends": [], "groups": [], "updated": 0}
-        self.bot = None                     # 模块用的 API 封装
+
+        # 组件（顺序重要：onebot 先于 bot/napcat/web 创建）
+        self.onebot = OneBotServer(self)
+        self.msgdb = MessageDB()
         self.ai = AIService(self)
         self.napcat = NapCatManager(self)
-        self.msgdb = MessageDB()
-        self.onebot = OneBotServer(self)
-        self.web = WebServer(self)
         self.plugins = ModuleManager(self)
         self.monitor = QQProcessMonitor(self)
-        self._migrate_ai_config()
-        self._shutdown: asyncio.Event | None = None
-        self._inject_attempted = False
-        self._bg_tasks: list[asyncio.Task] = []
-
-    # ---------- 生命周期 ----------
-
-    async def run(self):
-        self._shutdown = asyncio.Event()
+        self.web = WebServer(self)
         self.bot = BotAPI(self)
 
-        await self.web.start()              # 面板 + OneBot API 同端口
-        self.plugins.load_all()
+        # 运行状态
+        self.qq_info = None
+        self.recent_events = deque(maxlen=300)
+        self.contacts = {"friends": [], "groups": [], "updated": 0}
+        self._stop = None
+        self._tasks = []
+        self._migrate_ai_config()
 
-        self._bg_tasks.append(asyncio.create_task(self.monitor.loop()))
-        self._bg_tasks.append(asyncio.create_task(self._modules_watcher()))
-        if self.config["inject"].get("enabled"):
-            self._bg_tasks.append(asyncio.create_task(self._inject_loop()))
-        self._bg_tasks.append(asyncio.create_task(self._napcat_autolaunch()))
-        self._bg_tasks.append(asyncio.create_task(self._msgdb_cleanup_loop()))
+    # ---------- 配置快捷方式 ----------
 
-        if self.config["web"].get("auto_open_browser", True):
-            webbrowser.open(f"http://127.0.0.1:{self.config['server']['port']}/")
-
-        log.info("核心 v%s 已启动（模块目录: %s）", self.VERSION, MODULES_DIR)
-        await self._shutdown.wait()
-
-        log.info("正在停止各模块...")
-        for task in self._bg_tasks:
-            task.cancel()
-        await self.onebot.stop()
-        await self.web.stop()
-        log.info("框架已完全退出")
-
-    def request_shutdown(self):
-        """线程安全：托盘/Web 都通过它触发退出。"""
-        if self._shutdown and not self._shutdown.is_set():
-            self._shutdown.set()
-
-    # ---------- 模块数据目录（含 AI 语音等临时产物） ----------
+    def _contact_tags(self) -> dict:
+        return self.config.setdefault("contact_tags", {"group": {}, "friend": {}})
 
     def module_data_dir(self, name: str) -> str:
-        safe = "".join(ch for ch in name if ch.isalnum() or ch in "_-")
-        path = os.path.join(DATA_DIR, "data", safe)
+        safe = "".join(c for c in name if c.isalnum() or c in "_-")
+        path = os.path.join(DATA_STORE_DIR, safe)
         os.makedirs(path, exist_ok=True)
         return path
 
@@ -99,20 +80,157 @@ class App:
                 ai.pop(k, None)
             self.config.save()
 
-    # ---------- 联系人（好友/群列表与分组） ----------
+    # ---------- 生命周期 ----------
+
+    async def run(self):
+        self._stop = asyncio.Event()
+
+        await self.web.start()          # 面板 + OneBot API（含 NapCat 状态）
+        self.plugins.load_all()
+        self.napcat.start()             # 需要时后台注入启动 QQ
+
+        self._spawn(self.monitor.loop())
+        self._spawn(self._modules_watcher())
+        self._spawn(self._msgdb_cleanup_loop())
+        if self.config["inject"].get("enabled"):
+            self._spawn(self._inject_loop())
+
+        if self.config["web"].get("auto_open_browser", True):
+            import webbrowser
+            webbrowser.open(f"http://127.0.0.1:{self.config['server']['port']}/")
+
+        log.info("核心 v%s 已启动（模块目录: %s）", self.VERSION, MODULES_DIR)
+        await self._stop.wait()
+
+        log.info("正在停止各模块...")
+        for task in self._tasks:
+            task.cancel()
+        await self.onebot.stop()
+        await self.web.stop()
+        log.info("框架已完全退出")
+
+    def _spawn(self, coro):
+        self._tasks.append(asyncio.create_task(coro))
+
+    def request_shutdown(self):
+        if self._stop and not self._stop.is_set():
+            self._stop.set()
+
+    # ---------- 事件总线（纯透传：QQ -> 模块 -> QQ） ----------
+
+    def push_event(self, event: dict):
+        """NapCat 上报事件：存库、广播给模块和面板。"""
+        event.setdefault("_received_at", time.time())
+        self.recent_events.append(event)
+        if event.get("post_type") == "message":
+            asyncio.get_running_loop().run_in_executor(
+                None, self.msgdb.add, dict(event))
+        self.plugins.dispatch(event)
+        self._broadcast_web({"type": "event", "data": event})
+
+    def _broadcast_web(self, payload: dict):
+        text = json.dumps(payload, ensure_ascii=False)
+        for ws in list(self.web.subscribers):
+            self._spawn(self._ws_send(ws, text))
+
+    async def _ws_send(self, ws, text: str):
+        try:
+            await ws.send_str(text)
+        except Exception:
+            self.web.subscribers.discard(ws)
+
+    # ---------- 模块热重载监视 ----------
+
+    def _module_state(self) -> dict:
+        try:
+            return {f: os.stat(os.path.join(MODULES_DIR, f)).st_mtime
+                    for f in os.listdir(MODULES_DIR) if f.endswith(".py")}
+        except FileNotFoundError:
+            return {}
+
+    async def _modules_watcher(self):
+        known = self._module_state()
+        while True:
+            await asyncio.sleep(3)
+            current = self._module_state()
+            if current == known:
+                continue
+            added = sorted(set(current) - set(known))
+            removed = sorted(set(known) - set(current))
+            modified = sorted(f for f in set(known) & set(current)
+                              if current[f] != known[f])
+            log.info("模块变动（新增 %s 移除 %s 修改 %s），自动重载",
+                     added, removed, modified)
+            known = current
+            await asyncio.get_running_loop().run_in_executor(
+                None, self.plugins.reload_all)
+
+    # ---------- 消息库自动清理 ----------
+
+    async def _msgdb_cleanup_loop(self):
+        last_retention_check = 0.0
+        last_daily = ""
+        while True:
+            await asyncio.sleep(60)
+            cfg = self.config.get("message_db", {})
+            now = datetime.now()
+
+            days = int(cfg.get("retention_days", 0) or 0)
+            if days > 0 and time.time() - last_retention_check >= 3600:
+                last_retention_check = time.time()
+                deleted = await asyncio.get_running_loop().run_in_executor(
+                    None, self.msgdb.clear_before, days)
+                if deleted:
+                    log.info("消息库保留期清理: 删除 %d 条（保留 %d 天）", deleted, days)
+
+            t = str(cfg.get("daily_clear_time", "") or "").strip()
+            if len(t) == 5 and t == now.strftime("%H:%M"):
+                today = now.strftime("%Y-%m-%d")
+                if last_daily != today:
+                    last_daily = today
+                    await asyncio.get_running_loop().run_in_executor(
+                        None, self.msgdb.clear_all)
+                    log.info("每日定时清空消息库完成（%s）", t)
+
+    # ---------- QQ 进程注入（旧接口，模块一般不用） ----------
+
+    async def _inject_loop(self):
+        await asyncio.sleep(3)
+        if self.qq_info:
+            await self._do_inject(self.qq_info["pid"])
+
+    async def _do_inject(self, pid: int):
+        from framework.injector import inject_dll
+        dll = self.config["inject"].get("dll_path", "")
+        if not dll:
+            return
+        if not os.path.isabs(dll):
+            dll = os.path.join(os.path.dirname(DATA_DIR), dll)
+        if not os.path.exists(dll):
+            log.warning("注入 DLL 不存在: %s", dll)
+            return
+        try:
+            await asyncio.get_running_loop().run_in_executor(
+                None, inject_dll, pid, dll)
+        except Exception as e:
+            log.error("注入失败: %s", e)
+
+    # ---------- 联系人（好友/群 + 标签分组） ----------
 
     def _contact_tags(self) -> dict:
         return self.config.setdefault("contact_tags", {"group": {}, "friend": {}})
 
     async def refresh_contacts(self):
-        """通过 NapCat 拉取好友与群列表（NapCat 连接后自动执行，面板也可手动刷新）。"""
-        friends = await self.onebot.call_action("get_friend_list", {})
-        groups = await self.onebot.call_action("get_group_list", {})
-        self.contacts = {"friends": friends, "groups": groups, "updated": time.time()}
-        log.info("联系人已刷新: 好友 %d, 群 %d", len(friends), len(groups))
+        friends_resp = await self.onebot.call_action("get_friend_list", {})
+        groups_resp = await self.onebot.call_action("get_group_list", {})
+        self.contacts = {"friends": friends_resp.get("data") or [],
+                         "groups": groups_resp.get("data") or [],
+                         "updated": time.time()}
+        log.info("联系人已刷新: 好友 %d, 群 %d", len(self.contacts["friends"]),
+                 len(self.contacts["groups"]))
 
     def on_onebot_connected(self):
-        asyncio.ensure_future(self._safe_refresh_contacts())
+        self._spawn(self._safe_refresh_contacts())
 
     async def _safe_refresh_contacts(self):
         try:
@@ -121,14 +239,12 @@ class App:
             log.warning("自动刷新联系人失败: %s", e)
 
     def get_contacts(self) -> dict:
-        tags = self.contact_tags_view()
         return {"friends": self.contacts.get("friends", []),
                 "groups": self.contacts.get("groups", []),
                 "updated": self.contacts.get("updated", 0),
-                "tags": tags}
+                "tags": self.contact_tags_view()}
 
     def contact_tags_view(self) -> dict:
-        """{群号: [标签]} -> {标签: [群号]} 视图。"""
         raw = self._contact_tags()
         view = {"group": {}, "friend": {}}
         for ctype in ("group", "friend"):
@@ -145,42 +261,21 @@ class App:
 
     def get_groups_by_tag(self, tag: str) -> list:
         ids = [str(i) for i in self.contact_tags_view()["group"].get(tag, [])]
-        return [g for g in self.contacts.get("groups", []) if str(g.get("group_id")) in ids]
+        return [g for g in self.contacts.get("groups", [])
+                if str(g.get("group_id")) in ids]
 
     def get_friends_by_tag(self, tag: str) -> list:
         ids = [str(i) for i in self.contact_tags_view()["friend"].get(tag, [])]
-        return [f for f in self.contacts.get("friends", []) if str(f.get("user_id")) in ids]
+        return [f for f in self.contacts.get("friends", [])
+                if str(f.get("user_id")) in ids]
 
     # ---------- 权限 ----------
 
     def is_admin(self, user_id) -> bool:
-        """判断是否为管理员（config -> permissions.admins）。"""
         admins = self.config.get("permissions", {}).get("admins", [])
         return str(user_id) in [str(a).strip() for a in admins if str(a).strip()]
 
-    # ---------- 事件流 ----------
-
-    def push_event(self, event: dict):
-        self.recent_events.append(event)
-        if event.get("post_type") == "message":
-            self._store_message(event)
-        if event.get("post_type") == "message":
-            log.info("收到消息 [%s] %s: %s",
-                     event.get("message_type", "?"),
-                     event.get("sender", {}).get("nickname", event.get("user_id", "?")),
-                     str(event.get("raw_message", ""))[:100])
-        # 实时推送到 Web 面板
-        payload = json.dumps({"type": "event", "data": event}, ensure_ascii=False)
-        for ws in list(self.web.subscribers):
-            asyncio.ensure_future(self._ws_send(ws, payload))
-
-    async def _ws_send(self, ws, payload: str):
-        try:
-            await ws.send_str(payload)
-        except Exception:
-            self.web.subscribers.discard(ws)
-
-    # ---------- 模块数据存取（存 QQBotData/data/，不回写模块文件） ----------
+    # ---------- 模块数据读写（供 bot 透传） ----------
 
     def _module_data_path(self, name: str) -> str:
         safe = "".join(c for c in name if c.isalnum() or c in "_-")
@@ -198,130 +293,12 @@ class App:
             return {}
 
     def set_module_config(self, name: str, cfg: dict):
-        path = self._module_data_path(name)
-        with open(path, "w", encoding="utf-8") as f:
+        with open(self._module_data_path(name), "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
         log.info("模块数据已保存: %s", name)
-        # 通知模块配置变更
         module = self.plugins.modules.get(name)
         if module and hasattr(module, "on_config"):
             try:
                 module.on_config(self, cfg)
             except Exception:
                 log.exception("模块 %s on_config 出错", name)
-
-    # ---------- 模块文件夹监视（新增/修改/删除 自动热重载） ----------
-
-    def _module_state(self) -> dict:
-        try:
-            return {f: os.stat(os.path.join(MODULES_DIR, f)).st_mtime
-                    for f in os.listdir(MODULES_DIR) if f.endswith(".py")}
-        except FileNotFoundError:
-            return {}
-
-    async def _modules_watcher(self):
-        known = self._module_state()
-        while True:
-            await asyncio.sleep(3)
-            try:
-                current = self._module_state()
-                if current != known:
-                    added = set(current) - set(known)
-                    removed = set(known) - set(current)
-                    modified = {f for f in set(current) & set(known)
-                                if current[f] != known[f]}
-                    log.info("检测到模块变动（新增: %s，移除: %s，修改: %s），自动重载",
-                             sorted(added), sorted(removed), sorted(modified))
-                    known = current
-                    await asyncio.get_running_loop().run_in_executor(
-                        None, self.plugins.reload_all)
-            except Exception:
-                log.exception("模块监视出错")
-
-    # ---------- 消息入库 + 定期清理 ----------
-
-    def _store_message(self, event: dict):
-        try:
-            import asyncio as _aio
-            loop = asyncio.get_running_loop()
-            loop.run_in_executor(None, self.msgdb.add, event)
-        except Exception:
-            pass
-
-    async def _msgdb_cleanup_loop(self):
-        """每小时执行一次保留期清理；每天到达设定时刻清空全部。"""
-        import time as _time
-        last_retention_check = 0.0
-        last_daily = ""
-        while True:
-            try:
-                await asyncio.sleep(60)
-                cfg = self.config.get("message_db", {})
-                now = datetime.now()
-
-                days = int(cfg.get("retention_days", 0) or 0)
-                if days > 0 and _time.time() - last_retention_check >= 3600:
-                    last_retention_check = _time.time()
-                    deleted = await asyncio.get_running_loop().run_in_executor(
-                        None, self.msgdb.clear_before, days)
-                    if deleted:
-                        log.info("消息库保留期清理: 删除 %d 条（保留最近 %d 天）", deleted, days)
-
-                t = str(cfg.get("daily_clear_time", "") or "").strip()
-                if len(t) == 5 and t == now.strftime("%H:%M"):
-                    today = now.strftime("%Y-%m-%d")
-                    if last_daily != today:
-                        last_daily = today
-                        await asyncio.get_running_loop().run_in_executor(
-                            None, self.msgdb.clear_all)
-                        log.info("每日定时清空消息库完成（%s）", t)
-            except asyncio.CancelledError:
-                return
-            except Exception:
-                log.exception("消息库清理出错")
-
-    # ---------- NapCat 自动注入 ----------
-
-    async def _napcat_autolaunch(self):
-        if not self.config["napcat"].get("enabled", True):
-            return
-        if not self.config["napcat"].get("account", "").strip():
-            log.warning("NapCat 未配置机器人小号，跳过自动注入（面板可配置）")
-            return
-        await asyncio.sleep(3)  # 等服务与模块就绪
-        ok, msg = await asyncio.get_running_loop().run_in_executor(
-            None, self.napcat.launch)
-        log.info("NapCat 自动注入: %s", msg)
-
-    # ---------- QQ 进程事件 / 注入 ----------
-
-    async def on_qq_found(self, info: dict):
-        if self.config["inject"].get("enabled") and not self._inject_attempted:
-            self._inject_attempted = True
-            await self._do_inject(info["pid"])
-
-    async def on_qq_lost(self, info: dict):
-        self._inject_attempted = False
-
-    async def _inject_loop(self):
-        """注入配置开启但启动时 QQ 已在运行的情况下，首次扫描后立即注入。"""
-        await asyncio.sleep(1)
-        if not self._inject_attempted and self.qq_info:
-            self._inject_attempted = True
-            await self._do_inject(self.qq_info["pid"])
-
-    async def _do_inject(self, pid: int):
-        from framework.injector import inject_dll
-        dll = self.config["inject"].get("dll_path", "")
-        if not dll:
-            log.warning("已开启注入但未配置 inject.dll_path，跳过")
-            return
-        if not os.path.isabs(dll):
-            dll = os.path.join(app_root(), dll)
-        if not os.path.exists(dll):
-            log.warning("注入 DLL 不存在: %s，跳过（请把你的 hook DLL 放到该路径）", dll)
-            return
-        try:
-            await asyncio.get_running_loop().run_in_executor(None, inject_dll, pid, dll)
-        except Exception as e:
-            log.error("注入失败: %s", e)

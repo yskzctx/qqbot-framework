@@ -72,7 +72,7 @@ class NapCatManager:
             log.error(self.last_error)
             return False
         if self.deployed_version() == embedded and \
-                os.path.exists(os.path.join(self.core_dir, "napcat", "napcat.mjs")):
+                os.path.exists(os.path.join(self.core_dir, "napcat.mjs")):
             return True
         try:
             if os.path.exists(self.core_dir):
@@ -184,7 +184,12 @@ class NapCatManager:
             time.sleep(2)
         core = self.core_dir
         main_path = os.path.join(core, "napcat.mjs").replace("\\", "/")
-
+        # 恢复 loadNapCat.js 生成（NapCat 官方 launcher 每次启动也会重写此文件）
+        loader = ("const path = require('path');" + chr(10) +
+                  "const CurrentPath = path.dirname(__filename);" + chr(10) +
+                  "(async () => {" + chr(10) +
+                  f"  await import('file:///{main_path}');" + chr(10) +
+                  "})();" + chr(10))
         env = os.environ.copy()
         env["NAPCAT_PATCH_PACKAGE"] = os.path.join(core, "qqnt.json")
         env["NAPCAT_LOAD_PATH"] = os.path.join(core, "loadNapCat.js")
@@ -207,8 +212,8 @@ class NapCatManager:
                 proc = subprocess.Popen(args, env=env, cwd=core, stdout=lf,
                                         stderr=subprocess.STDOUT,
                                         creationflags=subprocess.CREATE_NO_WINDOW)
-            self.status = "注入中，等待 QQ 启动..."
-            for _ in range(12):  # 最多等 24 秒
+            self.status = "等待 QQ 启动..."
+            for i in range(30):  # 最多等 60 秒
                 _time.sleep(2)
                 if proc.poll() is not None:
                     break
@@ -216,6 +221,7 @@ class NapCatManager:
                                  if (p.info["name"] or "").lower() == "qq.exe"])
                 if now_count > len(before):
                     break
+                self.status = f"等待 QQ 启动... ({(i + 1) * 2} 秒)"
             tail = open(log_path, "rb").read()[-800:].decode("gbk", "replace")
             if proc.poll() is not None:
                 self.status = "失败"
