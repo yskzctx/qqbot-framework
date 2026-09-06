@@ -76,7 +76,8 @@ def load_config(path: str = CONFIG_PATH) -> Config:
     if not os.path.exists(path):
         with open(path, "w", encoding="utf-8") as f:
             json.dump(DEFAULT_CONFIG, f, ensure_ascii=False, indent=2)
-    with open(path, "r", encoding="utf-8") as f:
+    # utf-8-sig 兼容带 BOM 的文件（记事本/PowerShell 5.1 写入的配置）
+    with open(path, "r", encoding="utf-8-sig") as f:
         data = json.load(f)
     # 补齐缺失键，保证旧配置兼容新版本
     return Config(path, _deep_merge(DEFAULT_CONFIG, data))
