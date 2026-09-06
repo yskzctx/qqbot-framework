@@ -78,9 +78,24 @@
 - 排查并修复：PowerShell 5.1 `Out-File -Encoding utf8` 写配置带 BOM，
   导致 json.load 解析失败、框架静默退出；核心已改用 utf-8-sig 读取（免疫 BOM）
 
+## 四点九、v0.1.0 正式发布（2026-09-06）
+
+- GitHub Release: https://github.com/yskzctx/qqbot-framework/releases/tag/v0.1.0
+  （附 QQBot.exe 资产）；发布前最终测试 7/8 通过（唯一失败项为测试脚本预期错误）
+- 教训记录：① 不要拿用户主号做机器人链路测试——NapCat 首次对接时
+  入群欢迎模块向真实群组发了自动欢迎语；② QQ 9.9.25 对应用目录做完整性校验
+  （改 package.json 注入 → error v2:-8），注入式部署必须走 NapCat 官方
+  安装器/OneKey 流程，不能手改 package.json；③ PowerShell 5.1 无 BOM 的
+  utf8 中文注释会被按 GBK 误读导致脚本解析错误，远程脚本一律纯 ASCII
+- 云电脑状态：QQ 本体文件已全部还原为官方副本（versions 目录验证），
+  用户回来后按 QQ 弹窗点「重新下载/修复」一次即可；桌面已恢复整洁，
+  仅剩 QQBot.exe + QQBotData + 用户自己的文件（NapCatShell 空文件夹
+  被残留进程锁定，重启后可手动删除）
+
 ## 五、第二阶段候选事项
 
 - 在云电脑本机浏览器打开管理面板使用（127.0.0.1:2280）
+- QQ 消息接入（NapCat 正确部署方式）:待与用户确认测试小号后单独进行
 - 实际机器人功能模块（自动回复/定时任务/AI 对话接 QQ 消息等）
 - 模块在线安装/卸载界面、模块配置表单化（无 HTML 时的通用编辑器优化）
 - QQ 侧 NapCat 的部署与对接实测（一阶段未做真机消息收发）
