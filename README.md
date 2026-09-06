@@ -65,13 +65,23 @@ reply = await app.ai.chat([{"role": "user", "content": "你好"}])   # 调用 AI
 | `ai.*` | API 地址 / 密钥 / 模型 ID（OpenAI 兼容格式，面板里填更方便） |
 | `inject.enabled / dll_path` | 自动注入 hook DLL（默认关） |
 
-## 对接 QQ（二选一）
+## 对接 QQ（已内置，全自动）
 
-**方式 A：NapCat 连入（推荐）**——NapCat 负责 hook 原版 QQ：
-- NapCat 配 WebSocket 客户端 → `ws://127.0.0.1:2280/onebot/v11/ws`，token 填 `onebot.access_token`
-- 面板概览「OneBot 连接」变绿即成功
+NapCat 已内嵌在 EXE 里，**无需手动安装**：
 
-**方式 B：DLL 注入**——核心内置注入器（已在真机 QQ 验证）：把 64 位 hook DLL 放 modules\，`inject.enabled` 设 true。`bridge\` 有测试源码。
+1. 面板「概览」页 → NapCat 注入 → 填入**机器人小号 QQ 号** → 点「保存小号并注入启动」
+2. 框架自动：部署 NapCat 核心 → 找到本机 QQ → 注入启动 → 弹出登录窗口
+3. 首次登录一次小号（扫码/快速登录），之后每次自动快速登录
+4. 面板「OneBot 连接」变绿即成功，机器人上线
+
+说明：注入式运行依赖本机已安装的 QQ 本体（QQ 窗口会被 NapCat 接管运行）；
+同一小号只能在一台电脑登录，手机不受影响。建议机器人使用独立小号。
+
+<details><summary>高级：手动 DLL 注入（一般用不到）</summary>
+
+把 64 位 hook DLL 放 modules\，`inject.enabled` 设 true，框架检测到 QQ 进程后自动注入。`bridge\` 有测试源码。
+
+</details>
 
 ## OneBot 11 HTTP API（外部调用）
 

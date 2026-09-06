@@ -32,6 +32,16 @@ DEFAULT_CONFIG = {
     "permissions": {
         "admins": ["在这里填你的QQ号"],
     },
+    # NapCat 注入配置：框架启动后自动把 NapCat 注入进本机 QQ 本体
+    "napcat": {
+        "enabled": True,
+        # 机器人小号 QQ 号（面板里填更方便）
+        "account": "",
+        # 核心启动后自动注入拉起 QQ
+        "auto_launch": True,
+        # 注入前自动关闭已在运行的 QQ（同一账号只能登录一处）
+        "auto_close_qq": True,
+    },
     "qq": {
         "process_names": ["QQ.exe"],
         "poll_interval": 5,

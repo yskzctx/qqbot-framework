@@ -65,6 +65,10 @@ class WebServer:
         # 模块自有 API（万物皆可插件）：/api/m/<模块文件名>/<路径>
         web_app.router.add_route("*", "/api/m/{module}", self.handle_module_api)
         web_app.router.add_route("*", "/api/m/{module}/{tail:.*}", self.handle_module_api)
+        # NapCat 注入
+        web_app.router.add_get("/api/napcat/status", self.handle_napcat_status)
+        web_app.router.add_post("/api/napcat/account", self.handle_napcat_account)
+        web_app.router.add_post("/api/napcat/launch", self.handle_napcat_launch)
         # AI
         web_app.router.add_get("/api/ai/config", self.handle_ai_config_get)
         web_app.router.add_post("/api/ai/config", self.handle_ai_config_set)
@@ -241,6 +245,35 @@ class WebServer:
         except Exception as e:
             log.exception("模块 API 出错: %s%s", module, tail)
             return web.json_response({"error": str(e)}, status=500)
+
+    # ---------- NapCat API ----------
+
+    async def handle_napcat_status(self, request):
+        if not self._authorized(request):
+            return web.json_response({"error": "unauthorized"}, status=401)
+        return web.json_response(self.app.napcat.snapshot())
+
+    async def handle_napcat_account(self, request):
+        if not self._authorized(request):
+            return web.json_response({"error": "unauthorized"}, status=401)
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "bad request"}, status=400)
+        account = str(body.get("account", "")).strip()
+        if not account.isdigit():
+            return web.json_response({"ok": False, "error": "QQ 号必须是数字"}, status=400)
+        self.app.config["napcat"]["account"] = account
+        self.app.config.save()
+        log.info("NapCat 小号已设置为 %s", account)
+        return web.json_response({"ok": True})
+
+    async def handle_napcat_launch(self, request):
+        if not self._authorized(request):
+            return web.json_response({"error": "unauthorized"}, status=401)
+        ok, msg = await asyncio.get_running_loop().run_in_executor(
+            None, self.app.napcat.launch)
+        return web.json_response({"ok": ok, "message": msg}, status=200 if ok else 502)
 
     # ---------- AI API ----------
 

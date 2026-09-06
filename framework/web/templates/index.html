@@ -158,6 +158,19 @@
 
   <!-- ============ 概览页 ============ -->
   <section id="page-overview" class="page">
+    <div class="card" style="border-color:var(--blue)">
+      <h3>NapCat 注入（框架依赖电脑上的 QQ 本体运行）</h3>
+      <div class="row">
+        <input id="ncAccount" placeholder="机器人小号 QQ 号" style="width:200px">
+        <button class="primary" onclick="saveNapcatAccount()">保存小号并注入启动</button>
+        <button class="btn" onclick="launchNapcat()">重新注入启动</button>
+        <span class="sub" id="ncState"></span>
+      </div>
+      <div class="sub" style="margin-top:8px">
+        首次注入后请在弹出的 QQ 窗口登录小号（扫码或快速登录），登录一次后以后自动快速登录。
+        框架本身没有任何功能，所有功能由模块提供。
+      </div>
+    </div>
     <div class="grid">
       <div class="card">
         <h3>QQ 进程</h3>
@@ -371,6 +384,36 @@ function renderStatus(st){
   $("obPort2").textContent = st.server_port;
 }
 
+async function loadNapcat(){
+  try {
+    const r = await fetch("/api/napcat/status", {headers: H()});
+    if (r.status === 401) return;
+    const d = await r.json();
+    $("ncAccount").value = d.account || "";
+    $("ncState").textContent = (d.deployed ? "核心已部署 v" + d.version : "核心未部署") +
+      " · " + d.status + (d.qq_found ? "" : " · 未找到本机QQ") +
+      (d.last_error ? " · " + d.last_error : "");
+  } catch(e){}
+}
+async function saveNapcatAccount(){
+  const account = $("ncAccount").value.trim();
+  if (!/^\d+$/.test(account)){ alert("QQ 号必须是数字"); return; }
+  const r = await fetch("/api/napcat/account",{method:"POST",headers:H(),
+    body:JSON.stringify({account})});
+  const d = await r.json();
+  if (d.ok){ await launchNapcat(); loadNapcat(); }
+  else alert(d.error);
+}
+async function launchNapcat(){
+  $("ncState").textContent = "注入中...（QQ 将自动重启）";
+  try {
+    const r = await fetch("/api/napcat/launch",{method:"POST",headers:H()});
+    const d = await r.json();
+    $("ncState").textContent = d.message;
+    loadNapcat();
+  } catch(e){ $("ncState").textContent = "请求失败"; }
+}
+
 async function refresh(){
   try {
     const r = await fetch("/api/status", {headers: H()});
@@ -428,6 +471,7 @@ function enterPanel(){
   connectWS();
   loadModules();
   startModulePoll();
+  loadNapcat();
 }
 boot();
 </script>

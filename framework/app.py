@@ -10,6 +10,7 @@ from collections import deque
 import framework
 from framework.ai import AIService
 from framework.bot import BotAPI
+from framework.napcat import NapCatManager
 from framework.onebot import OneBotServer
 from framework.paths import DATA_STORE_DIR, MODULES_DIR, app_root
 from framework.plugins import ModuleManager
@@ -29,6 +30,7 @@ class App:
         self.recent_events = deque(maxlen=300)
         self.bot = None                     # 模块用的 API 封装
         self.ai = AIService(self)
+        self.napcat = NapCatManager(self)
         self.onebot = OneBotServer(self)
         self.web = WebServer(self)
         self.plugins = ModuleManager(self)
@@ -50,6 +52,7 @@ class App:
         self._bg_tasks.append(asyncio.create_task(self._modules_watcher()))
         if self.config["inject"].get("enabled"):
             self._bg_tasks.append(asyncio.create_task(self._inject_loop()))
+        self._bg_tasks.append(asyncio.create_task(self._napcat_autolaunch()))
 
         if self.config["web"].get("auto_open_browser", True):
             webbrowser.open(f"http://127.0.0.1:{self.config['server']['port']}/")
@@ -153,6 +156,19 @@ class App:
                         None, self.plugins.reload_all)
             except Exception:
                 log.exception("模块监视出错")
+
+    # ---------- NapCat 自动注入 ----------
+
+    async def _napcat_autolaunch(self):
+        if not self.config["napcat"].get("enabled", True):
+            return
+        if not self.config["napcat"].get("account", "").strip():
+            log.warning("NapCat 未配置机器人小号，跳过自动注入（面板可配置）")
+            return
+        await asyncio.sleep(3)  # 等服务与模块就绪
+        ok, msg = await asyncio.get_running_loop().run_in_executor(
+            None, self.napcat.launch)
+        log.info("NapCat 自动注入: %s", msg)
 
     # ---------- QQ 进程事件 / 注入 ----------
 
