@@ -12,7 +12,7 @@ from framework.ai import AIService
 from framework.bot import BotAPI
 from framework.napcat import NapCatManager
 from framework.onebot import OneBotServer
-from framework.paths import DATA_STORE_DIR, MODULES_DIR, app_root
+from framework.paths import DATA_DIR, DATA_STORE_DIR, MODULES_DIR, app_root
 from framework.plugins import ModuleManager
 from framework.process import QQProcessMonitor
 from framework.web import WebServer
@@ -28,6 +28,7 @@ class App:
         self.start_time = time.time()
         self.qq_info = None                 # QQ 进程快照（由 QQProcessMonitor 更新）
         self.recent_events = deque(maxlen=300)
+        self.contacts = {"friends": [], "groups": [], "updated": 0}
         self.bot = None                     # 模块用的 API 封装
         self.ai = AIService(self)
         self.napcat = NapCatManager(self)
@@ -35,6 +36,7 @@ class App:
         self.web = WebServer(self)
         self.plugins = ModuleManager(self)
         self.monitor = QQProcessMonitor(self)
+        self._migrate_ai_config()
         self._shutdown: asyncio.Event | None = None
         self._inject_attempted = False
         self._bg_tasks: list[asyncio.Task] = []
@@ -71,6 +73,79 @@ class App:
         """线程安全：托盘/Web 都通过它触发退出。"""
         if self._shutdown and not self._shutdown.is_set():
             self._shutdown.set()
+
+    # ---------- 模块数据目录（含 AI 语音等临时产物） ----------
+
+    def module_data_dir(self, name: str) -> str:
+        safe = "".join(ch for ch in name if ch.isalnum() or ch in "_-")
+        path = os.path.join(DATA_DIR, "data", safe)
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    # ---------- AI 旧配置迁移 ----------
+
+    def _migrate_ai_config(self):
+        ai = self.config.get("ai", {})
+        if ai.get("api_base") and not ai.get("profiles"):
+            ai["profiles"] = {"默认": {"api_base": ai.get("api_base", ""),
+                                       "api_key": ai.get("api_key", ""),
+                                       "model": ai.get("model", "")}}
+            ai["active"] = "默认"
+            for k in ("api_base", "api_key", "model"):
+                ai.pop(k, None)
+            self.config.save()
+
+    # ---------- 联系人（好友/群列表与分组） ----------
+
+    def _contact_tags(self) -> dict:
+        return self.config.setdefault("contact_tags", {"group": {}, "friend": {}})
+
+    async def refresh_contacts(self):
+        """通过 NapCat 拉取好友与群列表（NapCat 连接后自动执行，面板也可手动刷新）。"""
+        friends = await self.onebot.call_action("get_friend_list", {})
+        groups = await self.onebot.call_action("get_group_list", {})
+        self.contacts = {"friends": friends, "groups": groups, "updated": time.time()}
+        log.info("联系人已刷新: 好友 %d, 群 %d", len(friends), len(groups))
+
+    def on_onebot_connected(self):
+        asyncio.ensure_future(self._safe_refresh_contacts())
+
+    async def _safe_refresh_contacts(self):
+        try:
+            await self.refresh_contacts()
+        except Exception as e:
+            log.warning("自动刷新联系人失败: %s", e)
+
+    def get_contacts(self) -> dict:
+        tags = self.contact_tags_view()
+        return {"friends": self.contacts.get("friends", []),
+                "groups": self.contacts.get("groups", []),
+                "updated": self.contacts.get("updated", 0),
+                "tags": tags}
+
+    def contact_tags_view(self) -> dict:
+        """{群号: [标签]} -> {标签: [群号]} 视图。"""
+        raw = self._contact_tags()
+        view = {"group": {}, "friend": {}}
+        for ctype in ("group", "friend"):
+            for cid, tlist in raw[ctype].items():
+                for t in tlist:
+                    view[ctype].setdefault(t, []).append(cid)
+        return view
+
+    def set_contact_tags(self, ctype: str, cid: str, tag_list: list) -> dict:
+        raw = self._contact_tags()
+        raw[ctype][str(cid)] = [str(t).strip() for t in tag_list if str(t).strip()]
+        self.config.save()
+        return self.contact_tags_view()
+
+    def get_groups_by_tag(self, tag: str) -> list:
+        ids = [str(i) for i in self.contact_tags_view()["group"].get(tag, [])]
+        return [g for g in self.contacts.get("groups", []) if str(g.get("group_id")) in ids]
+
+    def get_friends_by_tag(self, tag: str) -> list:
+        ids = [str(i) for i in self.contact_tags_view()["friend"].get(tag, [])]
+        return [f for f in self.contacts.get("friends", []) if str(f.get("user_id")) in ids]
 
     # ---------- 权限 ----------
 

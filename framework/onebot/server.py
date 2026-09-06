@@ -76,6 +76,7 @@ class OneBotServer:
 
         self.clients.add(ws)
         log.info("OneBot 客户端已连接（当前在线 %d）", len(self.clients))
+        self.app.on_onebot_connected()
         try:
             async for msg in ws:
                 if msg.type == WSMsgType.TEXT:

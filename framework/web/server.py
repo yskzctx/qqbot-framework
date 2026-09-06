@@ -65,6 +65,10 @@ class WebServer:
         # 模块自有 API（万物皆可插件）：/api/m/<模块文件名>/<路径>
         web_app.router.add_route("*", "/api/m/{module}", self.handle_module_api)
         web_app.router.add_route("*", "/api/m/{module}/{tail:.*}", self.handle_module_api)
+        # 联系人（好友/群列表与分组）
+        web_app.router.add_get("/api/contacts", self.handle_contacts)
+        web_app.router.add_post("/api/contacts/refresh", self.handle_contacts_refresh)
+        web_app.router.add_post("/api/contacts/set_tags", self.handle_contacts_set_tags)
         # NapCat 注入
         web_app.router.add_get("/api/napcat/status", self.handle_napcat_status)
         web_app.router.add_post("/api/napcat/account", self.handle_napcat_account)
@@ -246,6 +250,38 @@ class WebServer:
             log.exception("模块 API 出错: %s%s", module, tail)
             return web.json_response({"error": str(e)}, status=500)
 
+    # ---------- 联系人 API ----------
+
+    async def handle_contacts(self, request):
+        if not self._authorized(request):
+            return web.json_response({"error": "unauthorized"}, status=401)
+        data = self.app.get_contacts()
+        data["bot_count"] = len(self.app.onebot.clients)
+        return web.json_response(data)
+
+    async def handle_contacts_refresh(self, request):
+        if not self._authorized(request):
+            return web.json_response({"error": "unauthorized"}, status=401)
+        try:
+            await self.app.refresh_contacts()
+            return web.json_response({"ok": True, "data": self.app.get_contacts()})
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=502)
+
+    async def handle_contacts_set_tags(self, request):
+        if not self._authorized(request):
+            return web.json_response({"error": "unauthorized"}, status=401)
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "bad request"}, status=400)
+        ctype = body.get("type")
+        if ctype not in ("group", "friend"):
+            return web.json_response({"ok": False, "error": "type 无效"}, status=400)
+        view = self.app.set_contact_tags(ctype, str(body.get("id", "")),
+                                         body.get("tags", []))
+        return web.json_response({"ok": True, "tags": view})
+
     # ---------- NapCat API ----------
 
     async def handle_napcat_status(self, request):
@@ -275,31 +311,53 @@ class WebServer:
             None, self.app.napcat.launch)
         return web.json_response({"ok": ok, "message": msg}, status=200 if ok else 502)
 
-    # ---------- AI API ----------
+    # ---------- AI API（多配置列表） ----------
 
     async def handle_ai_config_get(self, request):
         if not self._authorized(request):
             return web.json_response({"error": "unauthorized"}, status=401)
         cfg = self.app.config["ai"]
-        return web.json_response({"api_base": cfg.get("api_base", ""),
-                                  "api_key": cfg.get("api_key", ""),
-                                  "model": cfg.get("model", ""),
+        return web.json_response({"active": cfg.get("active", ""),
+                                  "profiles": cfg.get("profiles", {}),
                                   "ready": self.app.ai.ready()})
 
     async def handle_ai_config_set(self, request):
+        """body: {"action": "save"|"delete"|"active", "name": "...", "data": {...}}"""
         if not self._authorized(request):
             return web.json_response({"error": "unauthorized"}, status=401)
         try:
             body = await request.json()
         except Exception:
             return web.json_response({"ok": False, "error": "bad request"}, status=400)
+        action = body.get("action")
+        name = str(body.get("name", "")).strip()
         cfg = self.app.config["ai"]
-        cfg["api_base"] = str(body.get("api_base", "")).strip()
-        cfg["api_key"] = str(body.get("api_key", "")).strip()
-        cfg["model"] = str(body.get("model", "")).strip()
+        profiles = cfg.setdefault("profiles", {})
+
+        if action == "save":
+            if not name:
+                return web.json_response({"ok": False, "error": "配置名不能为空"}, status=400)
+            data = body.get("data") or {}
+            profiles[name] = {"api_base": str(data.get("api_base", "")).strip(),
+                              "api_key": str(data.get("api_key", "")).strip(),
+                              "model": str(data.get("model", "")).strip()}
+            if not cfg.get("active"):
+                cfg["active"] = name
+        elif action == "delete":
+            profiles.pop(name, None)
+            if cfg.get("active") == name:
+                cfg["active"] = next(iter(profiles), "")
+        elif action == "active":
+            if name not in profiles:
+                return web.json_response({"ok": False, "error": "配置不存在"}, status=404)
+            cfg["active"] = name
+        else:
+            return web.json_response({"ok": False, "error": "未知操作"}, status=400)
+
         self.app.config.save()
-        log.info("AI 配置已保存（model=%s）", cfg["model"])
-        return web.json_response({"ok": True, "ready": self.app.ai.ready()})
+        log.info("AI 配置已更新（action=%s name=%s）", action, name)
+        return web.json_response({"ok": True, "active": cfg.get("active", ""),
+                                  "ready": self.app.ai.ready()})
 
     async def handle_ai_test(self, request):
         if not self._authorized(request):

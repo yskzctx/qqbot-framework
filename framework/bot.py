@@ -29,6 +29,24 @@ class BotAPI:
     def is_admin(self, user_id) -> bool:
         return self.app.is_admin(user_id)
 
+    # ---------- 联系人与分组 ----------
+
+    def get_contacts(self) -> dict:
+        """好友与群列表缓存（需 NapCat 已连接；面板可刷新）。"""
+        return self.app.get_contacts()
+
+    def refresh_contacts(self):
+        """触发重新拉取好友/群列表（后台执行）。"""
+        self.app.request_contacts_refresh()
+
+    def get_groups_by_tag(self, tag: str) -> list:
+        """获取打上某标签的所有群（完整群信息列表）。"""
+        return self.app.get_groups_by_tag(tag)
+
+    def get_friends_by_tag(self, tag: str) -> list:
+        """获取打上某标签的所有好友。"""
+        return self.app.get_friends_by_tag(tag)
+
     def get_module_config(self, name: str) -> dict:
         return self.app.get_module_config(name)
 

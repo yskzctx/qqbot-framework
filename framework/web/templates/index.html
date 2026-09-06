@@ -118,6 +118,7 @@
 <nav>
   <button data-page="modules" class="active" onclick="showPage('modules')">模块</button>
   <button data-page="ai" onclick="showPage('ai')">AI 配置</button>
+  <button data-page="contacts" onclick="showPage('contacts')">联系人</button>
   <button data-page="overview" onclick="showPage('overview')">概览</button>
 </nav>
 
@@ -140,19 +141,55 @@
   <!-- ============ AI 配置页 ============ -->
   <section id="page-ai" class="page">
     <div class="card">
-      <h3>OpenAI 兼容接口配置（模块可通过核心调用）</h3>
-      <label class="f">API 地址（如 https://api.openai.com 或自建中转地址）</label>
+      <h3>AI 配置（OpenAI 兼容，可创建多个，模块按配置名选用）</h3>
+      <div class="row">
+        <select id="aiList" onchange="loadAProfile()" style="min-width:200px"></select>
+        <button class="btn" onclick="newAIProfile()">新建配置</button>
+        <button class="danger" onclick="deleteAIProfile()">删除当前</button>
+        <span class="sub" id="aiState"></span>
+      </div>
+      <label class="f">配置名</label>
+      <input id="aiName" style="width:100%;max-width:300px">
+      <label class="f">API 地址（如 https://api.openai.com 或自建中转）</label>
       <input id="aiBase" style="width:100%;max-width:520px" placeholder="https://api.example.com">
       <label class="f">API 密钥</label>
       <input id="aiKey" type="password" style="width:100%;max-width:520px" placeholder="sk-...">
       <label class="f">模型 ID</label>
-      <input id="aiModel" style="width:100%;max-width:520px" placeholder="gpt-4o / glm-4 / deepseek-chat ...">
+      <input id="aiModel" style="width:100%;max-width:520px" placeholder="gpt-4o / deepseek-chat / glm-4v...">
       <div class="row" style="margin-top:16px">
-        <button class="primary" onclick="saveAI()">保存配置</button>
+        <button class="primary" onclick="saveAI()">保存当前配置</button>
+        <button class="btn" onclick="setActiveAI()">设为全局激活</button>
         <button class="btn" onclick="testAI()">测试对话</button>
-        <span class="sub" id="aiState"></span>
       </div>
       <div class="sub" id="aiTestResult" style="white-space:pre-wrap;margin-top:10px"></div>
+      <div class="sub" style="margin-top:8px">
+        模块用法：await bot.app.ai.chat(msgs, profile="配置名") 指定配置；
+        不指定则用全局激活配置。chat 原样透传 messages，支持图片视觉段结构。
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 联系人页 ============ -->
+  <section id="page-contacts" class="page">
+    <div class="card">
+      <h3>好友与群列表</h3>
+      <div class="row">
+        <button class="btn" onclick="refreshContacts()">刷新联系人</button>
+        <span class="sub" id="ctHint">需 OneBot 连接在线（NapCat 已接入）</span>
+      </div>
+      <div class="sub" style="margin-top:8px">
+        给群/好友打标签分组后，模块可以按标签批量操作（如向"管理群"标签下的所有群群发）。
+      </div>
+    </div>
+    <div class="card">
+      <h3>群列表（<span id="ctGroupCount">0</span>）</h3>
+      <input id="ctSearchG" placeholder="搜索群名/群号" oninput="renderContacts()" style="width:240px">
+      <div id="ctGroups" style="margin-top:10px"></div>
+    </div>
+    <div class="card">
+      <h3>好友列表（<span id="ctFriendCount">0</span>）</h3>
+      <input id="ctSearchF" placeholder="搜索昵称/QQ号" oninput="renderContacts()" style="width:240px">
+      <div id="ctFriends" style="margin-top:10px"></div>
     </div>
   </section>
 
@@ -225,7 +262,6 @@
 let token = "";            // 仅存于页面内存，刷新/关闭即失效，每次进入都需输密码
 let sessionWs = null;
 let currentModule = null;
-let modulePollTimer = null;
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -276,11 +312,10 @@ function showPage(name){
     b.classList.toggle("active", b.dataset.page === name));
   document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
   $("page-" + name).classList.add("active");
-  if (name === "modules"){ loadModules(); startModulePoll(); } else stopModulePoll();
+  if (name === "modules"){ loadModules(); }
+  if (name === "contacts"){ loadContacts(); }
   if (name === "ai") loadAI();
 }
-function startModulePoll(){ stopModulePoll(); modulePollTimer = setInterval(loadModules, 5000); }
-function stopModulePoll(){ if (modulePollTimer){ clearInterval(modulePollTimer); modulePollTimer = null; } }
 
 /* ---------- 模块 ---------- */
 async function loadModules(){
@@ -325,31 +360,153 @@ async function loadModulesRender(){ /* 保留：刷新左侧高亮 */
   });
 }
 
-/* ---------- AI ---------- */
+/* ---------- AI（多配置列表） ---------- */
+let aiProfiles = {};
+
 async function loadAI(){
   try {
     const r = await fetch("/api/ai/config", {headers: H()});
     if (r.status === 401) return;
     const d = await r.json();
-    $("aiBase").value = d.api_base || "";
-    $("aiKey").value = d.api_key || "";
-    $("aiModel").value = d.model || "";
-    $("aiState").textContent = d.ready ? "✓ 已配置" : "未配置完整";
+    aiProfiles = d.profiles || {};
+    const sel = $("aiList");
+    sel.innerHTML = "";
+    Object.keys(aiProfiles).forEach(name => {
+      const o = document.createElement("option");
+      o.value = name; o.textContent = name;
+      sel.appendChild(o);
+    });
+    if (d.active && aiProfiles[d.active]) sel.value = d.active;
+    loadAProfile();
+    $("aiState").textContent = d.ready ? "✓ 全局激活配置完整" : "全局激活配置不完整";
   } catch(e){}
 }
+function loadAProfile(){
+  const p = aiProfiles[$("aiList").value] || {};
+  $("aiName").value = $("aiList").value || "";
+  $("aiBase").value = p.api_base || "";
+  $("aiKey").value = p.api_key || "";
+  $("aiModel").value = p.model || "";
+}
+function newAIProfile(){
+  const name = prompt("新配置的名称：");
+  if (!name) return;
+  if (aiProfiles[name]){ alert("该配置名已存在"); return; }
+  aiProfiles[name] = {api_base:"", api_key:"", model:""};
+  const sel = $("aiList");
+  const o = document.createElement("option");
+  o.value = name; o.textContent = name; sel.appendChild(o);
+  sel.value = name; loadAProfile();
+}
 async function saveAI(){
-  const r = await fetch("/api/ai/config", {method:"POST", headers: H(),
-    body: JSON.stringify({api_base: $("aiBase").value, api_key: $("aiKey").value, model: $("aiModel").value})});
+  const name = $("aiName").value.trim();
+  if (!name){ $("aiTestResult").textContent = "配置名不能为空"; return; }
+  const r = await fetch("/api/ai/config",{method:"POST",headers:H(),
+    body: JSON.stringify({action:"save", name, data:{
+      api_base: $("aiBase").value, api_key: $("aiKey").value, model: $("aiModel").value}})});
   const d = await r.json();
-  $("aiState").textContent = d.ok ? (d.ready ? "✓ 已保存，配置完整" : "已保存（信息不完整）") : "保存失败";
+  $("aiState").textContent = d.ok ? "已保存" : ("保存失败: " + d.error);
+  if (d.ok) loadAI();
+}
+async function deleteAIProfile(){
+  const name = $("aiList").value;
+  if (!name || !confirm(`确定删除配置「${name}」？`)) return;
+  const r = await fetch("/api/ai/config",{method:"POST",headers:H(),
+    body: JSON.stringify({action:"delete", name})});
+  const d = await r.json();
+  if (d.ok) loadAI();
+}
+async function setActiveAI(){
+  const name = $("aiList").value;
+  const r = await fetch("/api/ai/config",{method:"POST",headers:H(),
+    body: JSON.stringify({action:"active", name})});
+  const d = await r.json();
+  $("aiState").textContent = d.ok ? "已设为全局激活" : ("失败: " + d.error);
 }
 async function testAI(){
   $("aiTestResult").textContent = "请求中...";
   try {
-    const r = await fetch("/api/ai/test", {method:"POST", headers: H()});
+    const r = await fetch("/api/ai/test",{method:"POST",headers:H()});
     const d = await r.json();
     $("aiTestResult").textContent = d.ok ? "AI 回复: " + d.reply : "失败: " + d.error;
   } catch(e){ $("aiTestResult").textContent = "请求失败: " + e.message; }
+}
+
+/* ---------- 联系人 ---------- */
+let contactsData = {friends: [], groups: [], updated: 0, tags: {group:{}, friend:{}}};
+
+async function loadContacts(){
+  try {
+    const r = await fetch("/api/contacts", {headers: H()});
+    if (r.status === 401) return;
+    contactsData = await r.json();
+    renderContacts();
+  } catch(e){}
+}
+async function refreshContacts(){
+  $("ctHint").textContent = "刷新中...（首次会拉取全部好友与群）";
+  try {
+    const r = await fetch("/api/contacts/refresh", {method:"POST", headers: H()});
+    const d = await r.json();
+    if (d.ok){ contactsData = d.data; $("ctHint").textContent = "已刷新"; }
+    else $("ctHint").textContent = "失败: " + d.error;
+  } catch(e){ $("ctHint").textContent = "请求失败"; }
+  renderContacts();
+}
+function idTags(type, id){
+  const m = contactsData.tags?.[type] || {};
+  for (const [tag, ids] of Object.entries(m))
+    if (ids.map(String).includes(String(id))) return tag;
+  return "";
+}
+function renderContacts(){
+  const qg = ($("ctSearchG")?.value || "").toLowerCase();
+  const qf = ($("ctSearchF")?.value || "").toLowerCase();
+  const gbox = $("ctGroups"), fbox = $("ctFriends");
+  if (!gbox || !fbox) return;
+  gbox.innerHTML = ""; fbox.innerHTML = "";
+  const groups = (contactsData.groups || []).filter(g =>
+    !qg || String(g.group_name || "").toLowerCase().includes(qg) || String(g.group_id).includes(qg));
+  const friends = (contactsData.friends || []).filter(f =>
+    !qf || String(f.nickname || "").toLowerCase().includes(qf) || String(f.user_id).includes(qf));
+  $("ctGroupCount").textContent = groups.length;
+  $("ctFriendCount").textContent = friends.length;
+  groups.forEach(g => {
+    const div = document.createElement("div");
+    div.style.cssText = "padding:8px 4px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:center";
+    div.innerHTML = `<span style="flex:1">${esc(g.group_name || g.group_id)} <span style="color:var(--muted);font-size:12px">${g.group_id}</span></span>`;
+    const inp = document.createElement("input");
+    inp.placeholder = "标签（逗号分隔）"; inp.style.width = "200px";
+    inp.value = idTags("group", g.group_id);
+    inp.oninput = () => inp.dataset.dirty = "1";
+    const btn = document.createElement("button");
+    btn.className = "btn"; btn.textContent = "保存标签";
+    btn.onclick = () => saveTags("group", g.group_id, inp.value);
+    div.appendChild(inp); div.appendChild(btn);
+    gbox.appendChild(div);
+  });
+  friends.forEach(f => {
+    const div = document.createElement("div");
+    div.style.cssText = "padding:8px 4px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:center";
+    div.innerHTML = `<span style="flex:1">${esc(f.remark || f.nickname || f.user_id)} <span style="color:var(--muted);font-size:12px">${f.user_id}</span></span>`;
+    const inp = document.createElement("input");
+    inp.placeholder = "标签（逗号分隔）"; inp.style.width = "200px";
+    inp.value = idTags("friend", f.user_id);
+    inp.oninput = () => inp.dataset.dirty = "1";
+    const btn = document.createElement("button");
+    btn.className = "btn"; btn.textContent = "保存标签";
+    btn.onclick = () => saveTags("friend", f.user_id, inp.value);
+    div.appendChild(inp); div.appendChild(btn);
+    fbox.appendChild(div);
+  });
+}
+async function saveTags(type, id, text){
+  const tags = text.split(/[,，、]/).map(x => x.trim()).filter(Boolean);
+  const r = await fetch("/api/contacts/set_tags", {method:"POST", headers:H(),
+    body: JSON.stringify({type, id, tags})});
+  const d = await r.json();
+  if (d.ok){ contactsData.tags = d.tags; alert("标签已保存"); }
+  else alert("保存失败: " + d.error);
 }
 
 /* ---------- 概览 ---------- */
@@ -471,7 +628,6 @@ function enterPanel(){
   refresh();
   connectWS();
   loadModules();
-  startModulePoll();
   loadNapcat();
 }
 boot();

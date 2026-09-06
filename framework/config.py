@@ -22,11 +22,10 @@ DEFAULT_CONFIG = {
         # 反向 WS：框架主动连出去的 OneBot 服务端地址（可选，留空不启用）
         "reverse_ws_url": "",
     },
-    # AI 配置（OpenAI 兼容格式），模块可通过 app.ai.chat() 调用
+    # AI 配置（OpenAI 兼容格式）：多配置列表，面板可新建/删除/切换激活
     "ai": {
-        "api_base": "",   # 如 https://api.openai.com 或自建中转
-        "api_key": "",
-        "model": "",
+        "active": "",      # 激活的配置名（模块调用时使用）
+        "profiles": {},    # {配置名: {api_base, api_key, model}}
     },
     # 权限：管理员 QQ 号列表（所有模块共享，系统级操作需要管理员身份）
     "permissions": {
@@ -76,6 +75,11 @@ class Config:
 
     def get(self, key, default=None):
         return self.data.get(key, default)
+
+    def setdefault(self, key, default):
+        if key not in self.data or not isinstance(self.data[key], dict):
+            self.data[key] = default
+        return self.data[key]
 
     def save(self):
         with open(self.path, "w", encoding="utf-8") as f:
