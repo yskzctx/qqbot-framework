@@ -81,38 +81,11 @@ POST http://<ip>:2280/onebot/v11/send_private_msg?access_token=xxx
      body: {"user_id": 123456, "message": "hello"}
 ```
 
-## 远程访问面板（隧道穿透）
-
-云电脑没有公网 IP 时，用配套的 **隧道助手 TunnelHelper.exe**（黑窗口，基于
-Cloudflare Tunnel，免费不用注册，比 localtunnel 稳定，窗口开着就一直有效）把
-管理面板端口暴露出去，在任何浏览器远程打开面板：
-
-1. 把 `TunnelHelper.exe` 和 `cloudflared.exe` 放同一目录，双击运行
-2. 输入要暴露的本机端口（回车默认 2280），协议回车默认 http2
-3. 窗口显示 `https://xxxx.trycloudflare.com` 公网地址，最小化窗口保持隧道
-4. 任何设备浏览器打开该地址，输入面板密码即可远程管理
-
-注意：断线自动重连，但重连后公网地址会变（窗口会显示新地址）。
-
-#### 隧道连上就断 / 一直握手失败？（重要）
-
-如果机器上**开着代理软件**（Clash / v2rayN TUN 模式等），代理会拦截 cloudflared
-与 Cloudflare 边缘节点的专用连接（`*.argotunnel.com`，日志表现为
-`TLS handshake with edge error: EOF` / QUIC 超时 / x509 证书错误），导致隧道
-永远握不上手。解决办法（任选其一）：
-
-1. 代理软件里给 **cloudflared.exe 进程加 DIRECT（直连）规则**（推荐）
-2. 或在代理里放行域名 `*.argotunnel.com` 和 `*.trycloudflare.com`
-3. 或跑隧道时临时退出代理 / 关闭 TUN 模式（浏览器走代理不受影响，可开回系统代理）
-4. 若报 `x509: certificate has expired or is not yet valid`，先检查**系统时间**是否准确（云桌面虚机常见时钟漂移），不准先同步时间
-
-同理，其他装了代理的机器上用隧道助手也会遇到此问题，处理方式相同。
-
 ## 24 小时常驻（天翼云电脑）
 
 1. 管理员运行 `install_autostart.bat`，随云电脑登录自启
 2. 云电脑设置关闭「自动休眠 / 自动断开」
-3. 在本地电脑浏览器打开 `http://云电脑IP:2280/` 远程管理
+3. 在云电脑本机浏览器打开 `http://127.0.0.1:2280/` 管理面板
 
 ## 排错
 
