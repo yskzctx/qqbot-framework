@@ -10,6 +10,7 @@ from collections import deque
 import framework
 from framework.ai import AIService
 from framework.bot import BotAPI
+from framework.msgdb import MessageDB
 from framework.napcat import NapCatManager
 from framework.onebot import OneBotServer
 from framework.paths import DATA_DIR, DATA_STORE_DIR, MODULES_DIR, app_root
@@ -32,6 +33,7 @@ class App:
         self.bot = None                     # 模块用的 API 封装
         self.ai = AIService(self)
         self.napcat = NapCatManager(self)
+        self.msgdb = MessageDB()
         self.onebot = OneBotServer(self)
         self.web = WebServer(self)
         self.plugins = ModuleManager(self)
@@ -55,6 +57,7 @@ class App:
         if self.config["inject"].get("enabled"):
             self._bg_tasks.append(asyncio.create_task(self._inject_loop()))
         self._bg_tasks.append(asyncio.create_task(self._napcat_autolaunch()))
+        self._bg_tasks.append(asyncio.create_task(self._msgdb_cleanup_loop()))
 
         if self.config["web"].get("auto_open_browser", True):
             webbrowser.open(f"http://127.0.0.1:{self.config['server']['port']}/")
@@ -159,6 +162,8 @@ class App:
     def push_event(self, event: dict):
         self.recent_events.append(event)
         if event.get("post_type") == "message":
+            self._store_message(event)
+        if event.get("post_type") == "message":
             log.info("收到消息 [%s] %s: %s",
                      event.get("message_type", "?"),
                      event.get("sender", {}).get("nickname", event.get("user_id", "?")),
@@ -231,6 +236,48 @@ class App:
                         None, self.plugins.reload_all)
             except Exception:
                 log.exception("模块监视出错")
+
+    # ---------- 消息入库 + 定期清理 ----------
+
+    def _store_message(self, event: dict):
+        try:
+            import asyncio as _aio
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(None, self.msgdb.add, event)
+        except Exception:
+            pass
+
+    async def _msgdb_cleanup_loop(self):
+        """每小时执行一次保留期清理；每天到达设定时刻清空全部。"""
+        import time as _time
+        last_retention_check = 0.0
+        last_daily = ""
+        while True:
+            try:
+                await asyncio.sleep(60)
+                cfg = self.config.get("message_db", {})
+                now = datetime.now()
+
+                days = int(cfg.get("retention_days", 0) or 0)
+                if days > 0 and _time.time() - last_retention_check >= 3600:
+                    last_retention_check = _time.time()
+                    deleted = await asyncio.get_running_loop().run_in_executor(
+                        None, self.msgdb.clear_before, days)
+                    if deleted:
+                        log.info("消息库保留期清理: 删除 %d 条（保留最近 %d 天）", deleted, days)
+
+                t = str(cfg.get("daily_clear_time", "") or "").strip()
+                if len(t) == 5 and t == now.strftime("%H:%M"):
+                    today = now.strftime("%Y-%m-%d")
+                    if last_daily != today:
+                        last_daily = today
+                        await asyncio.get_running_loop().run_in_executor(
+                            None, self.msgdb.clear_all)
+                        log.info("每日定时清空消息库完成（%s）", t)
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                log.exception("消息库清理出错")
 
     # ---------- NapCat 自动注入 ----------
 

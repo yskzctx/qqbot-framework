@@ -41,6 +41,11 @@ DEFAULT_CONFIG = {
         # 注入前自动关闭已在运行的 QQ（同一账号只能登录一处）
         "auto_close_qq": True,
     },
+    # 消息数据库：自动清理规则
+    "message_db": {
+        "retention_days": 0,     # 保留最近 N 天（0 = 不按天清理）
+        "daily_clear_time": "",  # 每天 HH:MM 清空全部（空 = 不定时清空）
+    },
     "qq": {
         "process_names": ["QQ.exe"],
         "poll_interval": 5,

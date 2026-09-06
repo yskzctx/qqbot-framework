@@ -119,6 +119,7 @@
   <button data-page="modules" class="active" onclick="showPage('modules')">模块</button>
   <button data-page="ai" onclick="showPage('ai')">AI 配置</button>
   <button data-page="contacts" onclick="showPage('contacts')">联系人</button>
+  <button data-page="msgdb" onclick="showPage('msgdb')">数据库</button>
   <button data-page="overview" onclick="showPage('overview')">概览</button>
 </nav>
 
@@ -190,6 +191,44 @@
       <h3>好友列表（<span id="ctFriendCount">0</span>）</h3>
       <input id="ctSearchF" placeholder="搜索昵称/QQ号" oninput="renderContacts()" style="width:240px">
       <div id="ctFriends" style="margin-top:10px"></div>
+    </div>
+  </section>
+
+  <!-- ============ 数据库页 ============ -->
+  <section id="page-msgdb" class="page">
+    <div class="grid">
+      <div class="card"><h3>已存消息总数</h3><div class="value" id="dbTotal">-</div>
+        <div class="sub" id="dbFirst"></div></div>
+      <div class="card"><h3>数据库大小</h3><div class="value" id="dbSize">-</div>
+        <div class="sub">QQBotData/data/messages.db</div></div>
+      <div class="card"><h3>近 7 天</h3><div class="value" id="dbDays">-</div>
+        <div class="sub">每天入库条数</div></div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <h3>自动清理规则</h3>
+      <div class="row">
+        <span style="font-size:13px">保留最近</span>
+        <input id="dbDaysNum" type="number" min="0" style="width:80px" value="0">
+        <span style="font-size:13px">天（0 = 不按天清理）</span>
+        <input id="dbTime" placeholder="每天 HH:MM 清空（留空关闭）" style="width:240px">
+        <button class="primary" onclick="saveDBSettings()">保存规则</button>
+        <button class="danger" onclick="clearDB()">立即清空全部</button>
+      </div>
+      <div class="sub" style="margin-top:8px">清空只影响消息记录，不影响 QQ 本体和模块数据。</div>
+    </div>
+    <div class="card">
+      <h3>消息查询</h3>
+      <div class="row" style="margin-bottom:10px">
+        <select id="dbType" onchange="queryDB()"><option value="">全部</option>
+          <option value="group">群聊</option><option value="private">私聊</option></select>
+        <input id="dbChat" placeholder="群号/QQ号" style="width:160px" oninput="dbDebounce()">
+        <input id="dbKw" placeholder="内容关键词" style="width:200px" oninput="dbDebounce()">
+        <span class="sub" id="dbQueryInfo"></span>
+      </div>
+      <div id="dbRows" style="max-height:360px;overflow-y:auto;font-size:13px"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="dbMore" onclick="dbLoadMore()" style="display:none">加载更多</button>
+      </div>
     </div>
   </section>
 
@@ -314,6 +353,7 @@ function showPage(name){
   $("page-" + name).classList.add("active");
   if (name === "modules"){ loadModules(); }
   if (name === "contacts"){ loadContacts(); }
+  if (name === "msgdb"){ loadDBStats(); dbOffset = 0; $("dbRows").innerHTML = ""; dbQuery(); }
   if (name === "ai") loadAI();
 }
 
@@ -432,6 +472,60 @@ async function testAI(){
   } catch(e){ $("aiTestResult").textContent = "请求失败: " + e.message; }
 }
 
+/* ---------- 消息数据库 ---------- */
+let dbOffset = 0;
+let dbDebounceTimer = null;
+
+function dbDebounce(){
+  clearTimeout(dbDebounceTimer);
+  dbDebounceTimer = setTimeout(() => { dbOffset = 0; $("dbRows").innerHTML = ""; dbQuery(); }, 500);
+}
+function dbLoadMore(){ dbOffset += 100; dbQuery(); }
+async function dbQuery(){
+  const q = new URLSearchParams({limit: "100", offset: String(dbOffset),
+    type: $("dbType").value, chat_id: $("dbChat").value.trim(),
+    keyword: $("dbKw").value.trim()});
+  try {
+    const r = await fetch("/api/db/messages?" + q, {headers: H()});
+    if (r.status === 401) return;
+    const d = await r.json();
+    $("dbQueryInfo").textContent = "共 " + d.total + " 条，显示 " + (dbOffset + d.rows.length) + " 条";
+    $("dbMore").style.display = d.rows.length === 100 ? "" : "none";
+    d.rows.forEach(row => {
+      const div = document.createElement("div");
+      div.style.cssText = "padding:6px 2px;border-bottom:1px solid var(--border)";
+      div.innerHTML = '<span class="t">' + esc(row.time) + '</span> ' +
+        '<span style="color:var(--muted)">[' + (row.message_type === "group" ? "群" : "私") + " " + esc(row.chat_id) + ']</span> ' +
+        esc(row.nickname) + ": " + esc(row.raw_message).slice(0, 120);
+      $("dbRows").appendChild(div);
+    });
+  } catch(e){ $("dbQueryInfo").textContent = "查询失败"; }
+}
+async function loadDBStats(){
+  try {
+    const r = await fetch("/api/db/stats", {headers: H()});
+    if (r.status === 401) return;
+    const d = await r.json();
+    $("dbTotal").textContent = (d.total || 0).toLocaleString();
+    $("dbSize").textContent = (d.size_mb || 0) + " MB";
+    $("dbFirst").textContent = d.first_time ? "最早消息: " + d.first_time : "暂无消息";
+    $("dbDays").textContent = (d.days || []).slice(0, 3).map(x => x.day + ":" + x.c).join("  ") || "-";
+    $("dbDaysNum").value = (d.settings && d.settings.retention_days) || 0;
+    $("dbTime").value = (d.settings && d.settings.daily_clear_time) || "";
+  } catch(e){}
+}
+async function saveDBSettings(){
+  const r = await fetch("/api/db/settings", {method: "POST", headers: H(),
+    body: JSON.stringify({retention_days: parseInt($("dbDaysNum").value || 0),
+                          daily_clear_time: $("dbTime").value.trim()})});
+  const d = await r.json();
+  alert(d.ok ? "清理规则已保存" : ("失败: " + d.error));
+}
+async function clearDB(){
+  if (!confirm("确定清空全部消息记录？此操作不可恢复。")) return;
+  await fetch("/api/db/clear", {method: "POST", headers: H()});
+  loadDBStats(); $("dbRows").innerHTML = "";
+}
 /* ---------- 联系人 ---------- */
 let contactsData = {friends: [], groups: [], updated: 0, tags: {group:{}, friend:{}}};
 
@@ -550,7 +644,7 @@ async function loadNapcat(){
     $("ncAccount").value = d.account || "";
     $("ncState").textContent = (d.deployed ? "核心已部署 v" + d.version : "核心未部署") +
       " · " + d.status + (d.qq_found ? "" : " · 未找到本机QQ") +
-      (d.last_error ? " · " + d.last_error : "");
+      (d.last_error ? " · 错误: " + d.last_error.slice(0, 160) : "");
   } catch(e){}
 }
 async function saveNapcatAccount(){

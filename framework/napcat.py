@@ -168,9 +168,40 @@ class NapCatManager:
                 os.path.join(core, "NapCatWinBootHook.dll")]
         if cfg.get("auto_login", True):
             args.append(account)
+
+        # 启动并捕获 NapCat 输出（失败时用于诊断）
+        import time as _time
+        import psutil as _psutil
+        log_path = os.path.join(core, "launch.log")
+        before = set(p.pid for p in _psutil.process_iter(["name"])
+                     if (p.info["name"] or "").lower() == "qq.exe")
         try:
-            subprocess.Popen(args, env=env, cwd=core,
-                             creationflags=subprocess.CREATE_NO_WINDOW)
+            with open(log_path, "w", encoding="utf-8", errors="replace") as lf:
+                proc = subprocess.Popen(args, env=env, cwd=core, stdout=lf,
+                                        stderr=subprocess.STDOUT,
+                                        creationflags=subprocess.CREATE_NO_WINDOW)
+            self.status = "注入中，等待 QQ 启动..."
+            for _ in range(12):  # 最多等 24 秒
+                _time.sleep(2)
+                if proc.poll() is not None:
+                    break
+                now_count = len([p for p in _psutil.process_iter(["name"])
+                                 if (p.info["name"] or "").lower() == "qq.exe"])
+                if now_count > len(before):
+                    break
+            tail = open(log_path, "rb").read()[-800:].decode("gbk", "replace")
+            if proc.poll() is not None:
+                self.status = "注入启动失败"
+                self.last_error = f"NapCat 启动器已退出。输出: {tail}"
+                log.error("NapCat 启动器退出，输出: %s", tail)
+                return False, f"注入失败，NapCat 输出: {tail}"
+            new_qq = len([p for p in _psutil.process_iter(["name"])
+                          if (p.info["name"] or "").lower() == "qq.exe"])
+            if new_qq <= len(before):
+                self.status = "注入启动失败"
+                self.last_error = f"QQ 未能启动。NapCat 输出: {tail}"
+                log.error("QQ 未能启动，NapCat 输出: %s", tail)
+                return False, f"注入失败，QQ 未能启动。NapCat 输出: {tail}"
             self.status = "已注入启动"
             log.info("NapCat 注入启动完成: QQ=%s 小号=%s", qq_path, account)
             return True, "已注入启动，QQ 窗口即将出现（首次需登录一次小号）"

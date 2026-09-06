@@ -47,6 +47,24 @@ class BotAPI:
         """获取打上某标签的所有好友。"""
         return self.app.get_friends_by_tag(tag)
 
+    # ---------- 消息数据库 ----------
+
+    def db_query(self, limit=100, offset=0, msg_type=None, chat_id=None,
+                 keyword=None) -> dict:
+        """查询消息历史。返回 {"total": 总数, "rows": [{time, chat_id, user_id,
+        nickname, raw_message, message_id}...]}（按时间倒序）。"""
+        return self.app.msgdb.query(limit=limit, offset=offset, msg_type=msg_type,
+                                    chat_id=str(chat_id) if chat_id else None,
+                                    keyword=keyword)
+
+    def db_stats(self) -> dict:
+        """消息库统计：总数/大小/每天条数。"""
+        return self.app.msgdb.stats()
+
+    def db_add(self, event: dict):
+        """手动写入一条消息记录（一般不用，框架自动入库）。"""
+        self.app.msgdb.add(event)
+
     def get_module_config(self, name: str) -> dict:
         return self.app.get_module_config(name)
 

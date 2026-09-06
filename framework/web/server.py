@@ -69,6 +69,11 @@ class WebServer:
         web_app.router.add_get("/api/contacts", self.handle_contacts)
         web_app.router.add_post("/api/contacts/refresh", self.handle_contacts_refresh)
         web_app.router.add_post("/api/contacts/set_tags", self.handle_contacts_set_tags)
+        # 消息数据库
+        web_app.router.add_get("/api/db/stats", self.handle_db_stats)
+        web_app.router.add_get("/api/db/messages", self.handle_db_messages)
+        web_app.router.add_post("/api/db/settings", self.handle_db_settings)
+        web_app.router.add_post("/api/db/clear", self.handle_db_clear)
         # NapCat 注入
         web_app.router.add_get("/api/napcat/status", self.handle_napcat_status)
         web_app.router.add_post("/api/napcat/account", self.handle_napcat_account)
@@ -281,6 +286,51 @@ class WebServer:
         view = self.app.set_contact_tags(ctype, str(body.get("id", "")),
                                          body.get("tags", []))
         return web.json_response({"ok": True, "tags": view})
+
+    # ---------- 消息数据库 API ----------
+
+    async def handle_db_stats(self, request):
+        if not self._authorized(request):
+            return web.json_response({"error": "unauthorized"}, status=401)
+        stats = await asyncio.get_running_loop().run_in_executor(
+            None, self.app.msgdb.stats)
+        stats["settings"] = self.app.config.get("message_db", {})
+        return web.json_response(stats)
+
+    async def handle_db_messages(self, request):
+        if not self._authorized(request):
+            return web.json_response({"error": "unauthorized"}, status=401)
+        q = request.query
+        data = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: self.app.msgdb.query(
+                limit=min(int(q.get("limit", 100)), 500),
+                offset=int(q.get("offset", 0)),
+                msg_type=q.get("type") or None,
+                chat_id=q.get("chat_id") or None,
+                keyword=q.get("keyword") or None))
+        return web.json_response(data)
+
+    async def handle_db_settings(self, request):
+        if not self._authorized(request):
+            return web.json_response({"error": "unauthorized"}, status=401)
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "bad request"}, status=400)
+        cfg = self.app.config.setdefault("message_db", {})
+        cfg["retention_days"] = max(0, int(body.get("retention_days", 0) or 0))
+        t = str(body.get("daily_clear_time", "") or "").strip()
+        cfg["daily_clear_time"] = t if (len(t) == 5 and t[2] == ":") else ""
+        self.app.config.save()
+        log.info("消息库清理规则已更新: %s", cfg)
+        return web.json_response({"ok": True, "settings": cfg})
+
+    async def handle_db_clear(self, request):
+        if not self._authorized(request):
+            return web.json_response({"error": "unauthorized"}, status=401)
+        await asyncio.get_running_loop().run_in_executor(None, self.app.msgdb.clear_all)
+        log.info("消息库已手动清空")
+        return web.json_response({"ok": True})
 
     # ---------- NapCat API ----------
 
